@@ -18,6 +18,7 @@ const input = new Input(scene, game, { onPromotion: (color) => ui.showPromotion(
 const ai = new AI(createEngine(), { skill: ui.getSkill(), movetime: 1000 });
 let aiColor = 'b';      // computer plays the side the human did not choose
 let aiBusy = false;
+let gameId = 0;         // bumped on every New Game; stale AI replies are discarded
 
 // --- board sync ---------------------------------------------------------------
 function syncBoardFromGame() {
@@ -48,24 +49,33 @@ game.on('move', onMove);
 
 // --- AI turn ------------------------------------------------------------------
 async function triggerAI() {
-  if (aiBusy) return;
+  if (aiBusy || game.isGameOver() || game.turn() !== aiColor) return;
   aiBusy = true;
+  const myGame = gameId;
   input.disable();
   ui.setThinking(true);
-  let moved = false;
+
+  let mv = null;
   try {
-    const mv = await ai.bestMove(game.fen());
-    if (mv) moved = !!game.makeMove(mv); // emits 'move' -> onMove handles the rest
+    mv = await ai.bestMove(game.fen());
   } catch (err) {
     console.error('AI move failed:', err);
-  } finally {
-    ui.setThinking(false);
-    aiBusy = false;
-    // If the AI did not actually move (engine error or no legal move), re-open
-    // input so the board isn't soft-locked. On success, onMove re-enables input
-    // after the move animation, so we must NOT enable it here.
-    if (!moved && !game.isGameOver()) input.enable();
   }
+  aiBusy = false;
+
+  if (gameId !== myGame) {
+    // A New Game started while we were thinking: discard this stale result.
+    // If the fresh position now needs an AI move, start it (engine is free again).
+    if (game.turn() === aiColor && !game.isGameOver()) triggerAI();
+    return;
+  }
+
+  ui.setThinking(false);
+  if (mv && game.makeMove(mv)) return; // onMove updates status + re-enables input
+
+  // No move applied (engine error or no legal move): restore status, re-open input.
+  ui.setStatus(statusText(game));
+  if (!game.isGameOver()) input.enable();
 }
 
 // --- pointer: distinguish a click (select/move) from a drag (rotate) ----------
@@ -84,12 +94,24 @@ scene.domElement.addEventListener('pointerup', (e) => {
 function onSkillChange(skill) { ai.setSkill(skill); }
 
 function onNewGame(side, skill) {
+  gameId++;                                  // invalidate any in-flight AI search
   aiColor = side === 'w' ? 'b' : 'w';
   ai.setSkill(skill);
+  if (aiBusy) ai.stop();                     // hurry the stale search so the engine frees
   game.reset();
   syncBoardFromGame();
+  ui.setThinking(false);
   ui.setStatus(statusText(game));
-  if (game.turn() === aiColor) triggerAI();
+
+  if (aiBusy) {
+    // The previous search is still draining; its triggerAI tail will start the
+    // new AI turn when it finishes. Set input for the new side meanwhile.
+    if (game.turn() === aiColor) input.disable();
+    else input.enable();
+    return;
+  }
+
+  if (game.turn() === aiColor && !game.isGameOver()) triggerAI();
   else input.enable();
 }
 
@@ -99,6 +121,7 @@ function onNewGame(side, skill) {
 if (import.meta.env.DEV) {
   window.__chess = {
     game, input, scene, ai,
+    get aiBusy() { return aiBusy; },
     // Test helper: jump to a FEN, resync the board, disable AI (tests drive both sides).
     loadFen(fen) {
       aiColor = null;

@@ -20,6 +20,10 @@ export class AI {
     this.engine.send(`setoption name Skill Level value ${level}`);
   }
 
+  stop() {
+    this.engine.send('stop');
+  }
+
   async bestMove(fen) {
     // Always confirm readiness before position/go (avoids dropped commands).
     this.engine.send('isready');
