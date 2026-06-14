@@ -52,12 +52,19 @@ async function triggerAI() {
   aiBusy = true;
   input.disable();
   ui.setThinking(true);
+  let moved = false;
   try {
     const mv = await ai.bestMove(game.fen());
-    if (mv) game.makeMove(mv); // emits 'move' -> onMove handles the rest
+    if (mv) moved = !!game.makeMove(mv); // emits 'move' -> onMove handles the rest
+  } catch (err) {
+    console.error('AI move failed:', err);
   } finally {
     ui.setThinking(false);
     aiBusy = false;
+    // If the AI did not actually move (engine error or no legal move), re-open
+    // input so the board isn't soft-locked. On success, onMove re-enables input
+    // after the move animation, so we must NOT enable it here.
+    if (!moved && !game.isGameOver()) input.enable();
   }
 }
 
