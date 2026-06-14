@@ -2,3 +2,7 @@ node_modules/
 dist/
 public/engine/
 .DS_Store
+
+# Local verification artifacts (Playwright screenshots / session dir)
+.task*.png
+.playwright-mcp/

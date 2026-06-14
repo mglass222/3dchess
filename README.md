@@ -2,7 +2,7 @@
 
 A web-based chess game rendered in 3D. Play against a built-in Stockfish AI on a board you can freely orbit with the mouse. Standard chess rules; the "3D" is the presentation.
 
-![3D chess board](.task11-after-ai.png)
+![3D chess board](docs/screenshot.png)
 
 ## Requirements
 
