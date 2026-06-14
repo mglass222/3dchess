@@ -127,7 +127,8 @@ export class Scene {
     if (!obj) return;
     this.pieces.delete(square);
     this.scene.remove(obj);
-    obj.traverse((c) => { if (c.isMesh) c.geometry.dispose(); });
+    // Geometry + materials are shared across piece clones and owned by the loaded
+    // templates in pieces.js, so they are NOT disposed here (they live app-long).
   }
 
   clearPieces() {

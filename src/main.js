@@ -4,7 +4,7 @@ import { Input } from './input.js';
 import { AI } from './ai.js';
 import { createEngine } from './engine.js';
 import { createUI, statusText } from './ui.js';
-import { createPiece } from './pieces.js';
+import { createPiece, loadPieces } from './pieces.js';
 import { allSquares } from './coords.js';
 
 const appEl = document.getElementById('app');
@@ -135,7 +135,13 @@ if (import.meta.env.DEV) {
 
 // --- boot ---------------------------------------------------------------------
 (async function boot() {
-  ui.setStatus('Loading engine…');
-  await ai.init();
-  onNewGame(ui.getSide(), ui.getSkill());
+  try {
+    ui.setStatus('Loading…');
+    await loadPieces();
+    await ai.init();
+    onNewGame(ui.getSide(), ui.getSkill());
+  } catch (err) {
+    console.error('Failed to start:', err);
+    ui.setStatus('Failed to load — see console');
+  }
 })();

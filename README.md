@@ -49,3 +49,8 @@ npm test         # run the unit suite (Vitest)
 - **Rules** — `chess.js` wrapped by `src/game.js`, which is the source of truth and emits board "change-sets" for the view to animate.
 - **AI** — Stockfish compiled to WebAssembly, run in a Web Worker (`src/engine.js`) and driven by `src/ai.js` over the UCI protocol.
 - **Input / UI** — click-to-move with raycasting (`src/input.js`) and a minimal DOM overlay (`src/ui.js`); `src/main.js` wires it all together.
+
+## Credits
+
+- 3D chess piece models: ["chess-3d"](https://github.com/ernest-rudnicki/chess-3d) by Ernest Rudnicki, MIT License (see `public/models/LICENSE.txt`).
+- Chess engine: [Stockfish](https://stockfishchess.org/). Rules: [chess.js](https://github.com/jhlywa/chess.js). Rendering: [three.js](https://threejs.org/).
