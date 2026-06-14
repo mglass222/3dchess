@@ -45,10 +45,10 @@ const PROFILES = {
 function buildRook(material) {
   const group = new THREE.Group();
   group.add(lathe(PROFILES.r, material));
-  // Crenellations: four small blocks around the rim.
-  const merlon = new THREE.BoxGeometry(0.09, 0.08, 0.09);
+  // Crenellations: four small blocks around the rim (each owns its geometry
+  // so per-mesh disposal in scene.js is safe).
   for (let i = 0; i < 4; i++) {
-    const m = new THREE.Mesh(merlon, material);
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.08, 0.09), material);
     const a = (i / 4) * Math.PI * 2;
     m.position.set(Math.cos(a) * 0.18, 0.60, Math.sin(a) * 0.18);
     m.castShadow = true;
@@ -99,7 +99,8 @@ const BUILDERS = {
   k: (mat) => buildFinialedRoyalty('k', mat, (g, m) => {
     const v = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.16, 0.05), m);
     const h = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.05, 0.05), m);
-    v.position.y = 1.12; h.position.y = 1.13; v.castShadow = true; h.castShadow = true;
+    v.position.y = 1.12; h.position.y = 1.13; // 0.01 offset avoids z-fighting between the two bars
+    v.castShadow = true; h.castShadow = true;
     g.add(v); g.add(h);
   }),
 };
