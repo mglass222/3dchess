@@ -8,13 +8,14 @@ export class Input {
     this.enabled = false;
     this.selected = null;
     this.targets = [];
+    this._busy = false; // true while a move (incl. its async promotion) is committing
   }
 
   enable() { this.enabled = true; }
   disable() { this.enabled = false; this._clear(); }
 
   async onSquarePicked(square) {
-    if (!this.enabled) return;
+    if (!this.enabled || this._busy) return;
 
     if (this.selected === null) {
       this._trySelect(square);
@@ -27,8 +28,13 @@ export class Input {
       const color = this.game.pieceAt(from)?.color;
       const needsPromo = this.game.isPromotion(from, to);
       this._clear();
-      const promotion = needsPromo ? await this.onPromotion(color) : undefined;
-      this.game.makeMove({ from, to, promotion });
+      this._busy = true;
+      try {
+        const promotion = needsPromo ? await this.onPromotion(color) : undefined;
+        this.game.makeMove({ from, to, promotion });
+      } finally {
+        this._busy = false;
+      }
       return;
     }
 

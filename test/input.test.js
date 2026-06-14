@@ -24,12 +24,12 @@ function makeFakeGame({ turn = 'w', board = {}, targets = {}, promotions = [] })
 const noPromo = () => Promise.resolve('q');
 
 describe('Input', () => {
-  it('selects a friendly piece and highlights its legal targets', () => {
+  it('selects a friendly piece and highlights its legal targets', async () => {
     const scene = makeFakeScene();
     const game = makeFakeGame({ board: { e2: { type: 'p', color: 'w' } }, targets: { e2: ['e3', 'e4'] } });
     const input = new Input(scene, game, { onPromotion: noPromo });
     input.enable();
-    input.onSquarePicked('e2');
+    await input.onSquarePicked('e2');
     expect(scene.highlights).toEqual(['e3', 'e4']);
   });
 
@@ -38,24 +38,24 @@ describe('Input', () => {
     const game = makeFakeGame({ board: { e2: { type: 'p', color: 'w' } }, targets: { e2: ['e3', 'e4'] } });
     const input = new Input(scene, game, { onPromotion: noPromo });
     input.enable();
-    input.onSquarePicked('e2');
+    await input.onSquarePicked('e2');
     await input.onSquarePicked('e4');
     expect(game.moved).toEqual({ from: 'e2', to: 'e4', promotion: undefined });
     expect(scene.highlights).toEqual([]);
   });
 
-  it('ignores clicks on opponent pieces and empty squares when nothing is selected', () => {
+  it('ignores clicks on opponent pieces and empty squares when nothing is selected', async () => {
     const scene = makeFakeScene();
     const game = makeFakeGame({ board: { e7: { type: 'p', color: 'b' } }, targets: {} });
     const input = new Input(scene, game, { onPromotion: noPromo });
     input.enable();
-    input.onSquarePicked('e7'); // opponent
-    input.onSquarePicked('d4'); // empty
+    await input.onSquarePicked('e7'); // opponent
+    await input.onSquarePicked('d4'); // empty
     expect(scene.highlights).toEqual([]);
     expect(game.moved).toBeNull();
   });
 
-  it('switches selection when another friendly piece is clicked', () => {
+  it('switches selection when another friendly piece is clicked', async () => {
     const scene = makeFakeScene();
     const game = makeFakeGame({
       board: { e2: { type: 'p', color: 'w' }, d2: { type: 'p', color: 'w' } },
@@ -63,8 +63,8 @@ describe('Input', () => {
     });
     const input = new Input(scene, game, { onPromotion: noPromo });
     input.enable();
-    input.onSquarePicked('e2');
-    input.onSquarePicked('d2');
+    await input.onSquarePicked('e2');
+    await input.onSquarePicked('d2');
     expect(scene.highlights).toEqual(['d3', 'd4']);
   });
 
@@ -78,17 +78,39 @@ describe('Input', () => {
     });
     const input = new Input(scene, game, { onPromotion });
     input.enable();
-    input.onSquarePicked('a7');
+    await input.onSquarePicked('a7');
     await input.onSquarePicked('a8');
     expect(onPromotion).toHaveBeenCalledWith('w');
     expect(game.moved).toEqual({ from: 'a7', to: 'a8', promotion: 'r' });
   });
 
-  it('does nothing while disabled', () => {
+  it('ignores further clicks while a promotion is pending', async () => {
+    const scene = makeFakeScene();
+    let resolvePromo;
+    const onPromotion = vi.fn(() => new Promise((r) => { resolvePromo = r; }));
+    const game = makeFakeGame({
+      board: { a7: { type: 'p', color: 'w' }, b2: { type: 'p', color: 'w' } },
+      targets: { a7: ['a8'], b2: ['b3'] },
+      promotions: [{ from: 'a7', to: 'a8' }],
+    });
+    const input = new Input(scene, game, { onPromotion });
+    input.enable();
+    await input.onSquarePicked('a7');
+    const pending = input.onSquarePicked('a8'); // opens promotion, awaits
+    await input.onSquarePicked('b2');            // must be ignored while pending
+    expect(scene.highlights).toEqual([]);
+    expect(onPromotion).toHaveBeenCalledTimes(1);
+    resolvePromo('q');
+    await pending;
+    expect(game.moved).toEqual({ from: 'a7', to: 'a8', promotion: 'q' });
+  });
+
+  it('does nothing while disabled', async () => {
     const scene = makeFakeScene();
     const game = makeFakeGame({ board: { e2: { type: 'p', color: 'w' } }, targets: { e2: ['e4'] } });
     const input = new Input(scene, game, { onPromotion: noPromo });
-    input.onSquarePicked('e2'); // not enabled
+    await input.onSquarePicked('e2'); // not enabled
     expect(scene.highlights).toEqual([]);
+    expect(game.moved).toBeNull();
   });
 });
