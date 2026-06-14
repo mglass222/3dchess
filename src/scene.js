@@ -136,6 +136,8 @@ export class Scene {
 
   // Animate the piece currently on `from` to `to`. Returns a promise that
   // resolves when the slide completes. Updates the internal square map.
+  // A generation stamp makes a newer move on the same piece supersede an
+  // in-flight one (the older animation resolves early instead of fighting it).
   movePiece(from, to) {
     const obj = this.pieces.get(from);
     if (!obj) return Promise.resolve();
@@ -143,6 +145,7 @@ export class Scene {
     this.pieces.set(to, obj);
     obj.userData.square = to;
 
+    const myGen = (obj.userData._moveGen = (obj.userData._moveGen ?? 0) + 1);
     const start = obj.position.clone();
     const end = squareToWorld(to);
     const lift = 0.6;
@@ -150,6 +153,7 @@ export class Scene {
     const t0 = performance.now();
     return new Promise((resolve) => {
       const step = (now) => {
+        if (obj.userData._moveGen !== myGen) { resolve(); return; } // superseded
         const t = Math.min(1, (now - t0) / duration);
         const ease = t * t * (3 - 2 * t); // smoothstep
         obj.position.x = start.x + (end.x - start.x) * ease;
@@ -175,6 +179,8 @@ export class Scene {
   }
 
   clearHighlights() {
+    // Do NOT dispose ring.geometry/material — they are the shared
+    // _highlightGeom/_highlightMat singletons owned by the Scene.
     for (const ring of this.highlights) this.scene.remove(ring);
     this.highlights = [];
   }

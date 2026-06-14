@@ -1,3 +1,4 @@
+// TEMPORARY verification harness — replaced by the real game controller in Task 11.
 import { Scene } from './scene.js';
 import { createPiece } from './pieces.js';
 import { Game } from './game.js';
