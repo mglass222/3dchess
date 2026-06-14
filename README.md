@@ -45,7 +45,7 @@ npm test         # run the unit suite (Vitest)
 
 ## How it works
 
-- **Rendering** — Three.js scene with an orbit-only camera, procedural Staunton pieces, and animated moves (`src/scene.js`, `src/pieces.js`, `src/coords.js`).
+- **Rendering** — Three.js scene with an orbit-only camera, GLB chess-piece models loaded via `GLTFLoader` (preloaded into normalized, tintable templates), and animated moves (`src/scene.js`, `src/pieces.js`, `src/coords.js`).
 - **Rules** — `chess.js` wrapped by `src/game.js`, which is the source of truth and emits board "change-sets" for the view to animate.
 - **AI** — Stockfish compiled to WebAssembly, run in a Web Worker (`src/engine.js`) and driven by `src/ai.js` over the UCI protocol.
 - **Input / UI** — click-to-move with raycasting (`src/input.js`) and a minimal DOM overlay (`src/ui.js`); `src/main.js` wires it all together.

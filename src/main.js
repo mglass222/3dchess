@@ -19,6 +19,7 @@ const ai = new AI(createEngine(), { skill: ui.getSkill(), movetime: 1000 });
 let aiColor = 'b';      // computer plays the side the human did not choose
 let aiBusy = false;
 let gameId = 0;         // bumped on every New Game; stale AI replies are discarded
+let booted = false;     // true once models + engine finish loading; gates UI handlers
 
 // --- board sync ---------------------------------------------------------------
 function syncBoardFromGame() {
@@ -91,9 +92,13 @@ scene.domElement.addEventListener('pointerup', (e) => {
 });
 
 // --- UI handlers --------------------------------------------------------------
-function onSkillChange(skill) { ai.setSkill(skill); }
+function onSkillChange(skill) {
+  if (!booted) return;
+  ai.setSkill(skill);
+}
 
 function onNewGame(side, skill) {
+  if (!booted) return;                       // ignore clicks before models/engine load
   gameId++;                                  // invalidate any in-flight AI search
   aiColor = side === 'w' ? 'b' : 'w';
   ai.setSkill(skill);
@@ -139,6 +144,7 @@ if (import.meta.env.DEV) {
     ui.setStatus('Loading…');
     await loadPieces();
     await ai.init();
+    booted = true;
     onNewGame(ui.getSide(), ui.getSkill());
   } catch (err) {
     console.error('Failed to start:', err);
