@@ -17,7 +17,7 @@ const MATERIALS = {
 // clones and live for the app's lifetime (scene.js must NOT dispose them).
 const templates = {};
 
-const TARGET_KING_HEIGHT = 1.05; // world units; relative piece sizes are preserved
+const TARGET_KING_HEIGHT = 1.4; // world units (1 = one square); relative sizes preserved
 
 // Load + normalize all six models once. Browser-only (GLTFLoader/fetch). Must be
 // awaited before the first createPiece() call.
