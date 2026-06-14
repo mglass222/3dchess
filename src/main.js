@@ -12,7 +12,7 @@ const sceneEl = document.getElementById('scene');
 
 const scene = new Scene(sceneEl);
 const game = new Game();
-const ui = createUI(appEl, { onNewGame, onSkillChange });
+const ui = createUI(appEl, { onNewGame, onSkillChange, onThemeChange });
 const input = new Input(scene, game, { onPromotion: (color) => ui.showPromotion(color) });
 
 const ai = new AI(createEngine(), { skill: ui.getSkill(), movetime: 1000 });
@@ -92,6 +92,11 @@ scene.domElement.addEventListener('pointerup', (e) => {
 });
 
 // --- UI handlers --------------------------------------------------------------
+function onThemeChange(key) {
+  scene.setTheme(key);
+  try { localStorage.setItem('chess-theme', key); } catch { /* ignore */ }
+}
+
 function onSkillChange(skill) {
   if (!booted) return;
   ai.setSkill(skill);
@@ -145,6 +150,9 @@ if (import.meta.env.DEV) {
     await loadPieces();
     await ai.init();
     booted = true;
+    let savedTheme = null;
+    try { savedTheme = localStorage.getItem('chess-theme'); } catch { /* ignore */ }
+    if (savedTheme) { ui.setTheme(savedTheme); scene.setTheme(savedTheme); }
     onNewGame(ui.getSide(), ui.getSkill());
   } catch (err) {
     console.error('Failed to start:', err);

@@ -1,3 +1,5 @@
+import { THEMES } from './themes.js';
+
 // Status string derived purely from game state (unit-tested).
 export function statusText(game) {
   if (game.isCheckmate()) {
@@ -38,6 +40,9 @@ export function createUI(container, handlers) {
       <input id="skill" type="range" min="0" max="20" value="5" />
       <span id="skillval">5</span>
     </label>
+    <label>Theme
+      <select id="theme"></select>
+    </label>
     <span class="status" id="status">White to move</span>
     <div id="promo"><div class="box"></div></div>
   `;
@@ -49,6 +54,14 @@ export function createUI(container, handlers) {
   const sideEl = root.querySelector('#side');
   const promo = root.querySelector('#promo');
   const promoBox = promo.querySelector('.box');
+  const themeEl = root.querySelector('#theme');
+  for (const t of THEMES) {
+    const opt = document.createElement('option');
+    opt.value = t.key;
+    opt.textContent = t.label;
+    themeEl.appendChild(opt);
+  }
+  themeEl.addEventListener('change', () => handlers.onThemeChange(themeEl.value));
 
   root.querySelector('#newgame').addEventListener('click', () => {
     handlers.onNewGame(sideEl.value, Number(skillEl.value));
@@ -65,6 +78,8 @@ export function createUI(container, handlers) {
     setThinking(on) { statusEl.classList.toggle('thinking', on); if (on) statusEl.textContent = 'Computer is thinking…'; },
     getSide() { return sideEl.value; },
     getSkill() { return Number(skillEl.value); },
+    getTheme() { return themeEl.value; },
+    setTheme(key) { themeEl.value = key; },
     // Show Q/R/B/N picker; resolves with the chosen piece letter.
     showPromotion(color) {
       promoBox.innerHTML = '';
