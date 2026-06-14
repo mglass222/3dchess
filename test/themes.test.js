@@ -24,4 +24,13 @@ describe('themes', () => {
     expect(stars.geometry.getAttribute('position').count).toBe(100);
     expect(stars.name).toBe('starfield');
   });
+  it('includes the named "place" themes, each with a skyline + ground + silhouette', () => {
+    for (const key of ['egypt', 'paris', 'london', 'rome', 'newyork']) {
+      const t = THEMES.find((x) => x.key === key);
+      expect(t, `theme ${key}`).toBeTruthy();
+      expect(typeof t.scenery).toBe('string');
+      expect(t.ground).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(t.stone).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+  });
 });
