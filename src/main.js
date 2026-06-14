@@ -97,7 +97,17 @@ function onNewGame(side, skill) {
 // Lets automated/e2e checks drive moves via input.onSquarePicked without
 // computing screen pixels. Not present in `vite build` output.
 if (import.meta.env.DEV) {
-  window.__chess = { game, input, scene, ai };
+  window.__chess = {
+    game, input, scene, ai,
+    // Test helper: jump to a FEN, resync the board, disable AI (tests drive both sides).
+    loadFen(fen) {
+      aiColor = null;
+      game.reset(fen);
+      syncBoardFromGame();
+      ui.setStatus(statusText(game));
+      input.enable();
+    },
+  };
 }
 
 // --- boot ---------------------------------------------------------------------
