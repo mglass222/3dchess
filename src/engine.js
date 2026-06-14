@@ -1,7 +1,9 @@
 // Low-level wrapper around the Stockfish lite-single engine running as a classic
 // Web Worker (vendored at /engine/stockfish-18-lite-single.js by scripts/copy-engine.js).
 // The .wasm sits beside the .js so Emscripten's locateFile resolves it automatically.
-const ENGINE_URL = '/engine/stockfish-18-lite-single.js';
+// Resolve under Vite's base (BASE_URL is '/' in dev, '/3dchess/' in the Pages build),
+// so the worker .js (and its sibling .wasm) load correctly at any deploy path.
+const ENGINE_URL = `${import.meta.env.BASE_URL}engine/stockfish-18-lite-single.js`;
 
 export function createEngine(url = ENGINE_URL) {
   const worker = new Worker(url); // classic worker — do NOT pass { type: 'module' }
