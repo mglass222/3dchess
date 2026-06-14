@@ -114,6 +114,71 @@ export class Scene {
     this.renderer.render(this.scene, this.camera);
   }
 
+  placePiece(square, object3d) {
+    const { x, z } = squareToWorld(square);
+    object3d.position.set(x, 0, z);
+    object3d.userData.square = square;
+    this.pieces.set(square, object3d);
+    this.scene.add(object3d);
+  }
+
+  removePieceAt(square) {
+    const obj = this.pieces.get(square);
+    if (!obj) return;
+    this.pieces.delete(square);
+    this.scene.remove(obj);
+    obj.traverse((c) => { if (c.isMesh) c.geometry.dispose(); });
+  }
+
+  clearPieces() {
+    for (const square of [...this.pieces.keys()]) this.removePieceAt(square);
+  }
+
+  // Animate the piece currently on `from` to `to`. Returns a promise that
+  // resolves when the slide completes. Updates the internal square map.
+  movePiece(from, to) {
+    const obj = this.pieces.get(from);
+    if (!obj) return Promise.resolve();
+    this.pieces.delete(from);
+    this.pieces.set(to, obj);
+    obj.userData.square = to;
+
+    const start = obj.position.clone();
+    const end = squareToWorld(to);
+    const lift = 0.6;
+    const duration = 280; // ms
+    const t0 = performance.now();
+    return new Promise((resolve) => {
+      const step = (now) => {
+        const t = Math.min(1, (now - t0) / duration);
+        const ease = t * t * (3 - 2 * t); // smoothstep
+        obj.position.x = start.x + (end.x - start.x) * ease;
+        obj.position.z = start.z + (end.z - start.z) * ease;
+        obj.position.y = Math.sin(t * Math.PI) * lift; // arc hop
+        if (t < 1) requestAnimationFrame(step);
+        else { obj.position.set(end.x, 0, end.z); resolve(); }
+      };
+      requestAnimationFrame(step);
+    });
+  }
+
+  setHighlights(squares) {
+    this.clearHighlights();
+    for (const sq of squares) {
+      const ring = new THREE.Mesh(this._highlightGeom, this._highlightMat);
+      const { x, z } = squareToWorld(sq);
+      ring.position.set(x, 0.02, z);
+      ring.rotation.x = -Math.PI / 2;
+      this.scene.add(ring);
+      this.highlights.push(ring);
+    }
+  }
+
+  clearHighlights() {
+    for (const ring of this.highlights) this.scene.remove(ring);
+    this.highlights = [];
+  }
+
   // Raycast a pointer event to a square. Prefers a hit on a piece (so tall pieces
   // can be clicked), else falls back to the board plane.
   pickSquare(event) {
