@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3D Chess</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; }
+      #app { position: fixed; inset: 0; }
+      #scene { position: absolute; inset: 0; }
+      #scene canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="scene"></div>
+      <!-- UI overlay is injected by ui.js into #app -->
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
