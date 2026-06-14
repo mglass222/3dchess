@@ -2,6 +2,8 @@
 
 A web-based chess game rendered in 3D. Play against a built-in Stockfish AI on a board you can freely orbit with the mouse. Standard chess rules; the "3D" is the presentation.
 
+**▶ Play it live: https://mglass222.github.io/3dchess/**
+
 ![3D chess board](docs/screenshot.png)
 
 ## Requirements
@@ -25,6 +27,8 @@ npm run dev      # start the dev server, then open the printed local URL
 npm run build    # production build into dist/
 npm run preview  # serve the production build
 ```
+
+The `main` branch auto-deploys to **https://mglass222.github.io/3dchess/** via GitHub Actions (`.github/workflows/deploy.yml`) on every push.
 
 ## Test
 
