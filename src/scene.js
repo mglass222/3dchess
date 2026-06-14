@@ -43,7 +43,7 @@ export class Scene {
     // Invisible plane at the board top for raycasting empty squares.
     this.pickPlane = new THREE.Mesh(
       new THREE.PlaneGeometry(8, 8),
-      new THREE.MeshBasicMaterial({ visible: false }),
+      new THREE.MeshBasicMaterial({ visible: false, side: THREE.DoubleSide }),
     );
     this.pickPlane.rotation.x = -Math.PI / 2;
     this.scene.add(this.pickPlane);
