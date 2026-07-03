@@ -5,8 +5,85 @@ import {
 } from './coords.js';
 import { getTheme, makeGradientTexture, makeStarfield, makeScenery, DEFAULT_THEME } from './themes.js';
 
-const LIGHT_SQ = 0xddc9a3;
-const DARK_SQ = 0x8a5a3b;
+const LIGHT_SQ = 0xdac799;
+const DARK_SQ = 0x724528;
+
+export const CAMERA_MAX_POLAR_ANGLE = Math.PI / 2 - 0.04;
+
+export function applyRendererQuality(renderer) {
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.08;
+}
+
+export function createBoardMaterials() {
+  return {
+    light: new THREE.MeshPhysicalMaterial({
+      color: LIGHT_SQ,
+      roughness: 0.44,
+      metalness: 0.02,
+      clearcoat: 0.26,
+      clearcoatRoughness: 0.45,
+    }),
+    dark: new THREE.MeshPhysicalMaterial({
+      color: DARK_SQ,
+      roughness: 0.48,
+      metalness: 0.03,
+      clearcoat: 0.22,
+      clearcoatRoughness: 0.5,
+    }),
+    frame: new THREE.MeshPhysicalMaterial({
+      color: 0x2c2018,
+      roughness: 0.5,
+      metalness: 0.04,
+      clearcoat: 0.18,
+      clearcoatRoughness: 0.38,
+    }),
+  };
+}
+
+export function createStoneMaterial() {
+  return new THREE.MeshStandardMaterial({
+    color: 0x7d7868,
+    roughness: 0.94,
+    metalness: 0,
+  });
+}
+
+export function createStoneTable() {
+  const table = new THREE.Group();
+  table.name = 'stone-table';
+  const stone = createStoneMaterial();
+
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(10.4, 0.42, 10.4), stone);
+  slab.position.y = -0.55;
+  slab.castShadow = true;
+  slab.receiveShadow = true;
+  table.add(slab);
+
+  const bevel = new THREE.Mesh(new THREE.CylinderGeometry(7.25, 7.5, 0.28, 8), stone);
+  bevel.position.y = -0.83;
+  bevel.rotation.y = Math.PI / 8;
+  bevel.castShadow = true;
+  bevel.receiveShadow = true;
+  table.add(bevel);
+
+  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3.35, 1.95, 12), stone);
+  pedestal.position.y = -1.93;
+  pedestal.castShadow = true;
+  pedestal.receiveShadow = true;
+  table.add(pedestal);
+
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(4.35, 4.8, 0.38, 12), stone);
+  base.position.y = -3.1;
+  base.castShadow = true;
+  base.receiveShadow = true;
+  table.add(base);
+
+  return table;
+}
 
 export class Scene {
   constructor(container) {
