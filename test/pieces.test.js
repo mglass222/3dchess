@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { createPiece, normalizeModel, _setTemplate, PIECE_TYPES } from '../src/pieces.js';
+import {
+  createPiece,
+  normalizeModel,
+  _setTemplate,
+  PIECE_TYPES,
+  getPieceMaterial,
+} from '../src/pieces.js';
 
 function fakeTemplate(height = 1) {
   const mesh = new THREE.Mesh(
@@ -58,5 +64,33 @@ describe('pieces', () => {
     _setTemplate('p', fakeTemplate(0.5));
     _setTemplate('k', fakeTemplate(1.05));
     expect(height(createPiece('k', 'w'))).toBeGreaterThan(height(createPiece('p', 'w')));
+  });
+
+  it('uses premium ivory and ebony piece materials', () => {
+    const white = getPieceMaterial('w');
+    const black = getPieceMaterial('b');
+
+    expect(white).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+    expect(black).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+    expect(white.color.getHex()).toBe(0xf3ead2);
+    expect(black.color.getHex()).toBe(0x17120f);
+    expect(white.roughness).toBeCloseTo(0.32, 5);
+    expect(black.roughness).toBeCloseTo(0.38, 5);
+    expect(white.clearcoat).toBeCloseTo(0.42, 5);
+    expect(black.clearcoat).toBeCloseTo(0.34, 5);
+  });
+
+  it('assigns the shared premium material to every mesh in a clone', () => {
+    _setTemplate('r', fakeTemplate(1));
+    const piece = createPiece('r', 'b');
+    const black = getPieceMaterial('b');
+
+    piece.traverse((child) => {
+      if (child.isMesh) {
+        expect(child.material).toBe(black);
+        expect(child.castShadow).toBe(true);
+        expect(child.receiveShadow).toBe(true);
+      }
+    });
   });
 });
