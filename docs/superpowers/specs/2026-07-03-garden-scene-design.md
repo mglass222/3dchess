@@ -4,6 +4,8 @@
 
 Replace the current selectable background/theme presentation with one polished outdoor garden scene for the 3D chess board. The board should sit on a stone table in a lush garden with a waterfall, use higher-quality-looking chess pieces, and prevent the camera from rotating below board level.
 
+Implement this in phases. Phase 1 revamps the chessboard, stone table, pieces, lighting, and camera clamp while leaving the existing theme selector and scenery system intact. Phase 2 replaces the theme/background system with the single garden waterfall scene and generated scenic asset.
+
 ## Current Context
 
 The app is a Vite and Three.js chess game. Rendering lives mainly in `src/scene.js`, piece loading and normalization in `src/pieces.js`, theme/background generation in `src/themes.js`, and UI theme selection in `src/ui.js`. The app already loads MIT-licensed GLB chess pieces from `public/models/` and uses `OrbitControls` for board rotation.
@@ -18,11 +20,36 @@ Use a hybrid garden approach:
 - Three.js geometry provides the near-field physical scene: stone table, board, rocks, foliage accents, subtle water/pond surfaces, and shadow-catching ground.
 - Existing GLB chess pieces remain the base model source, but their presentation is upgraded through materials, scale, lighting, shadows, and small supporting geometry where useful.
 
-This keeps the scene visually richer than pure procedural geometry while preserving enough real 3D structure around the board for orbiting to feel convincing.
+This keeps the scene visually richer than pure procedural geometry while preserving enough real 3D structure around the board for orbiting to feel convincing. The first implementation pass stops before the generated scenic background and focuses on the playable board area.
+
+## Phase Plan
+
+### Phase 1: Board, Pieces, Lighting, and Camera
+
+Phase 1 should ship independently with no generated scenery asset. It includes:
+
+- A more premium board surface and frame.
+- A visible stone table beneath the board.
+- Higher-quality piece materials using the existing GLB models.
+- Renderer, lighting, shadow, and tone-mapping improvements that make the board and pieces feel richer.
+- A camera clamp that prevents viewing below the board/table.
+- Focused unit tests for piece materials and scene/control helpers where practical.
+
+Phase 1 should not remove the theme selector or replace `src/themes.js`.
+
+### Phase 2: Garden Waterfall Scenery
+
+Phase 2 follows after Phase 1 is accepted. It includes:
+
+- A photorealistic generated garden/waterfall panoramic backdrop.
+- Near-field garden geometry such as rocks, foliage accents, pond/water hints, and shadow-catching ground.
+- Removal of the theme selector and old theme persistence.
+- Replacement or retirement of old multi-theme helper code.
+- Browser visual QA across desktop and mobile.
 
 ## Scene Design
 
-The board sits on a broad carved stone table. The table should be visibly larger than the board, with a rounded or chamfered slab, sturdy pedestal or base, rough stone material, and contact shadows beneath pieces and board edges. The garden surrounds the table with a waterfall in the background, layered greenery, rocks, and a natural sky/lighting mood.
+The board sits on a broad carved stone table. The table should be visibly larger than the board, with a rounded or chamfered slab, sturdy pedestal or base, rough stone material, and contact shadows beneath pieces and board edges. In Phase 2, the garden surrounds the table with a waterfall in the background, layered greenery, rocks, and a natural sky/lighting mood.
 
 The generated background should be used as an environment/backdrop layer, not as the board itself. The playable board, table, pieces, highlights, and click targets remain code-native 3D objects.
 
@@ -48,7 +75,7 @@ Zoom limits should be adjusted so the board, table, and enough waterfall context
 
 ## UI Changes
 
-Remove the theme selector from the overlay because the game will now have one scene. The rest of the UI remains unchanged: new game, side selection, difficulty, status, and promotion controls.
+In Phase 1, keep the theme selector unchanged so the board and piece revamp can be reviewed independently. In Phase 2, remove the theme selector from the overlay because the game will then have one scene. The rest of the UI remains unchanged: new game, side selection, difficulty, status, and promotion controls.
 
 If local storage contains an old saved theme key, the app should ignore it safely.
 
