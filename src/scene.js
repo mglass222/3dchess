@@ -93,8 +93,7 @@ export class Scene {
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    applyRendererQuality(this.renderer);
     container.appendChild(this.renderer.domElement);
     this.domElement = this.renderer.domElement;
 
@@ -113,9 +112,9 @@ export class Scene {
     this.controls.minDistance = 6;
     this.controls.maxDistance = 28;
     // Orbit-only: full 360deg around (azimuth unconstrained), tilt from near
-    // top-down to just under the board; clamp shy of the poles to avoid flip.
+    // top-down to just above board level; clamp shy of the poles to avoid flip.
     this.controls.minPolarAngle = 0.05;
-    this.controls.maxPolarAngle = Math.PI - 0.05;
+    this.controls.maxPolarAngle = CAMERA_MAX_POLAR_ANGLE;
 
     this._addLights();
     this._buildBoard();
@@ -143,41 +142,62 @@ export class Scene {
   }
 
   _addLights() {
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-    const key = new THREE.DirectionalLight(0xffffff, 1.1);
-    key.position.set(6, 12, 6);
+    this.scene.add(new THREE.HemisphereLight(0xf4fff4, 0x33402c, 0.7));
+    this.scene.add(new THREE.AmbientLight(0xffffff, 0.18));
+
+    const key = new THREE.DirectionalLight(0xfff1cf, 2.3);
+    key.position.set(6.5, 11, 5);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
     key.shadow.camera.near = 1;
-    key.shadow.camera.far = 40;
-    key.shadow.camera.left = -8; key.shadow.camera.right = 8;
-    key.shadow.camera.top = 8; key.shadow.camera.bottom = -8;
+    key.shadow.camera.far = 42;
+    key.shadow.camera.left = -9;
+    key.shadow.camera.right = 9;
+    key.shadow.camera.top = 9;
+    key.shadow.camera.bottom = -9;
+    key.shadow.bias = -0.00015;
     this.scene.add(key);
-    const fill = new THREE.DirectionalLight(0xaaccff, 0.35);
-    fill.position.set(-6, 6, -4);
-    this.scene.add(fill);
+
+    const rim = new THREE.DirectionalLight(0xbad7ff, 0.65);
+    rim.position.set(-8, 5, -7);
+    this.scene.add(rim);
   }
 
   _buildBoard() {
+    const table = createStoneTable();
+    this.scene.add(table);
+
     const board = new THREE.Group();
-    const tile = new THREE.BoxGeometry(1, 0.25, 1);
-    const lightMat = new THREE.MeshStandardMaterial({ color: LIGHT_SQ, roughness: 0.7 });
-    const darkMat = new THREE.MeshStandardMaterial({ color: DARK_SQ, roughness: 0.7 });
+    board.name = 'chess-board';
+    const tile = new THREE.BoxGeometry(1, 0.18, 1);
+    const { light, dark, frame } = createBoardMaterials();
+
     for (const sq of allSquares()) {
       const { x, z } = squareToWorld(sq);
-      const mesh = new THREE.Mesh(tile, isLightSquare(sq) ? lightMat : darkMat);
-      mesh.position.set(x, -0.125, z); // top face at y=0
+      const mesh = new THREE.Mesh(tile, isLightSquare(sq) ? light : dark);
+      mesh.position.set(x, -0.09, z); // top face at y=0
+      mesh.castShadow = true;
       mesh.receiveShadow = true;
       board.add(mesh);
     }
-    // Frame skirt.
-    const frame = new THREE.Mesh(
-      new THREE.BoxGeometry(8.6, 0.3, 8.6),
-      new THREE.MeshStandardMaterial({ color: 0x241a14, roughness: 0.8 }),
+
+    const frameMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(8.8, 0.34, 8.8),
+      frame,
     );
-    frame.position.y = -0.16;
-    frame.receiveShadow = true;
-    board.add(frame);
+    frameMesh.position.y = -0.2;
+    frameMesh.castShadow = true;
+    frameMesh.receiveShadow = true;
+    board.add(frameMesh);
+
+    const underlay = new THREE.Mesh(
+      new THREE.BoxGeometry(8.6, 0.3, 8.6),
+      frame,
+    );
+    underlay.position.y = -0.32;
+    underlay.receiveShadow = true;
+    board.add(underlay);
+
     this.scene.add(board);
   }
 
