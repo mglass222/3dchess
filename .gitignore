@@ -6,3 +6,4 @@ public/engine/
 # Local verification artifacts (Playwright screenshots / session dir)
 .task*.png
 .playwright-mcp/
+.superpowers/
