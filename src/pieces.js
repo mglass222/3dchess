@@ -129,6 +129,11 @@ const PIECE_ROTATION_Y = {
   n: Math.PI / 2,
 };
 
+function markPieceInstanceGeometry(geometry) {
+  geometry.userData.pieceInstanceGeometry = true;
+  return geometry;
+}
+
 export function getPieceMaterial(color) {
   return MATERIALS[color];
 }
@@ -137,7 +142,7 @@ function applyWoodTextureCoordinates(mesh, color) {
   const positionAttribute = mesh.geometry?.attributes?.position;
   if (!positionAttribute) return;
 
-  mesh.geometry = mesh.geometry.clone();
+  mesh.geometry = markPieceInstanceGeometry(mesh.geometry.clone());
   mesh.geometry.computeBoundingBox();
   const box = mesh.geometry.boundingBox;
   const positions = mesh.geometry.attributes.position;
@@ -157,8 +162,8 @@ function applyWoodTextureCoordinates(mesh, color) {
 }
 
 // type -> normalized template Object3D (base at y=0, centered on x/z). Populated
-// by loadPieces(); createPiece() clones these. Geometry/materials are shared across
-// clones and live for the app's lifetime (scene.js must NOT dispose them).
+// by loadPieces(); createPiece() clones these and marks per-piece geometry clones
+// for disposal when the board removes them.
 const templates = {};
 
 const TARGET_KING_HEIGHT = 1.4; // world units (1 = one square); relative sizes preserved
@@ -202,6 +207,7 @@ function setDetailShadows(mesh) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   mesh.userData.pieceDetail = true;
+  if (mesh.geometry) markPieceInstanceGeometry(mesh.geometry);
   return mesh;
 }
 
