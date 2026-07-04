@@ -19,14 +19,14 @@ const MATERIALS = {
     sheenRoughness: 0.7,
   }),
   b: new THREE.MeshPhysicalMaterial({
-    color: 0x17120f,
-    roughness: 0.38,
+    color: 0xb91c1c,
+    roughness: 0.36,
     metalness: 0.04,
-    clearcoat: 0.34,
-    clearcoatRoughness: 0.32,
-    sheen: 0.08,
-    sheenColor: 0x5a4033,
-    sheenRoughness: 0.65,
+    clearcoat: 0.38,
+    clearcoatRoughness: 0.3,
+    sheen: 0.12,
+    sheenColor: 0xff6b5f,
+    sheenRoughness: 0.62,
   }),
 };
 
