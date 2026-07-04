@@ -66,20 +66,20 @@ describe('pieces', () => {
     expect(height(createPiece('k', 'w'))).toBeGreaterThan(height(createPiece('p', 'w')));
   });
 
-  it('uses premium ivory and ebony piece materials', () => {
+  it('uses premium ivory and ruby red piece materials', () => {
     const white = getPieceMaterial('w');
-    const black = getPieceMaterial('b');
+    const red = getPieceMaterial('b');
 
     expect(white).toBeInstanceOf(THREE.MeshPhysicalMaterial);
-    expect(black).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+    expect(red).toBeInstanceOf(THREE.MeshPhysicalMaterial);
     expect(white.color.getHex()).toBe(0xf3ead2);
-    expect(black.color.getHex()).toBe(0x17120f);
+    expect(red.color.getHex()).toBe(0xb91c1c);
     expect(white.roughness).toBeCloseTo(0.32, 5);
-    expect(black.roughness).toBeCloseTo(0.38, 5);
+    expect(red.roughness).toBeCloseTo(0.36, 5);
     expect(white.clearcoat).toBeCloseTo(0.42, 5);
-    expect(black.clearcoat).toBeCloseTo(0.34, 5);
+    expect(red.clearcoat).toBeCloseTo(0.38, 5);
     expect(white.sheenColor.getHex()).toBe(0xfff4df);
-    expect(black.sheenColor.getHex()).toBe(0x5a4033);
+    expect(red.sheenColor.getHex()).toBe(0xff6b5f);
   });
 
   it('assigns the shared premium material to every mesh in a clone', () => {
