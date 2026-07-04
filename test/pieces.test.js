@@ -18,13 +18,22 @@ function fakeTemplate(height = 1) {
   g.add(mesh);
   return g;
 }
-function firstMeshColor(obj) {
-  let hex = null;
-  obj.traverse((c) => { if (hex === null && c.isMesh) hex = c.material.color.getHex(); });
-  return hex;
-}
 function height(obj) {
   return new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3()).y;
+}
+function detailNames(obj) {
+  const names = [];
+  obj.traverse((c) => {
+    if (c.userData.pieceDetail) names.push(c.name);
+  });
+  return names;
+}
+function namedMesh(obj, name) {
+  let mesh = null;
+  obj.traverse((c) => {
+    if (!mesh && c.isMesh && c.name === name) mesh = c;
+  });
+  return mesh;
 }
 
 describe('pieces', () => {
@@ -44,9 +53,17 @@ describe('pieces', () => {
     expect(createPiece('p', 'w')).not.toBe(obj); // a fresh clone each call
   });
 
+  it('rotates knights sideways without rotating other pieces', () => {
+    _setTemplate('n', fakeTemplate(0.9));
+    _setTemplate('p', fakeTemplate(0.5));
+
+    expect(createPiece('n', 'w').rotation.y).toBeCloseTo(Math.PI / 2, 5);
+    expect(createPiece('p', 'w').rotation.y).toBeCloseTo(0, 5);
+  });
+
   it('tints white vs black with different materials', () => {
-    _setTemplate('q', fakeTemplate(1));
-    expect(firstMeshColor(createPiece('q', 'w'))).not.toBe(firstMeshColor(createPiece('q', 'b')));
+    expect(getPieceMaterial('w').userData.woodGrain.baseHex)
+      .not.toBe(getPieceMaterial('b').userData.woodGrain.baseHex);
   });
 
   it('normalizeModel grounds (y=0), centers x/z, and scales', () => {
@@ -66,30 +83,103 @@ describe('pieces', () => {
     expect(height(createPiece('k', 'w'))).toBeGreaterThan(height(createPiece('p', 'w')));
   });
 
-  it('uses premium ivory and ruby red piece materials', () => {
+  it('uses glossy wood-grain ivory and ebony piece materials', () => {
     const white = getPieceMaterial('w');
-    const red = getPieceMaterial('b');
-
-    expect(white).toBeInstanceOf(THREE.MeshPhysicalMaterial);
-    expect(red).toBeInstanceOf(THREE.MeshPhysicalMaterial);
-    expect(white.color.getHex()).toBe(0xf3ead2);
-    expect(red.color.getHex()).toBe(0xb91c1c);
-    expect(white.roughness).toBeCloseTo(0.32, 5);
-    expect(red.roughness).toBeCloseTo(0.36, 5);
-    expect(white.clearcoat).toBeCloseTo(0.42, 5);
-    expect(red.clearcoat).toBeCloseTo(0.38, 5);
-    expect(white.sheenColor.getHex()).toBe(0xfff4df);
-    expect(red.sheenColor.getHex()).toBe(0xff6b5f);
-  });
-
-  it('assigns the shared premium material to every mesh in a clone', () => {
-    _setTemplate('r', fakeTemplate(1));
-    const piece = createPiece('r', 'b');
     const black = getPieceMaterial('b');
 
+    expect(white).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+    expect(black).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+    expect(white.color.getHex()).toBe(0xffffff);
+    expect(black.color.getHex()).toBe(0xffffff);
+    expect(white.vertexColors).toBe(false);
+    expect(black.vertexColors).toBe(false);
+    expect(white.map).toBeInstanceOf(THREE.DataTexture);
+    expect(black.map).toBeInstanceOf(THREE.DataTexture);
+    expect(white.userData.woodGrain).toMatchObject({ baseHex: 0xd1a25d, grainHex: 0xe2bd7d });
+    expect(black.userData.woodGrain).toMatchObject({ baseHex: 0x12100d, grainHex: 0x32261d });
+    expect(white.roughness).toBeCloseTo(0.26, 5);
+    expect(black.roughness).toBeCloseTo(0.23, 5);
+    expect(white.clearcoat).toBeCloseTo(0.55, 5);
+    expect(black.clearcoat).toBeCloseTo(0.62, 5);
+    expect(white.sheenColor.getHex()).toBe(0xf8d18e);
+    expect(black.sheenColor.getHex()).toBe(0x6a4a38);
+  });
+
+  it('adds classic detail meshes to each piece family', () => {
+    for (const type of PIECE_TYPES) _setTemplate(type, fakeTemplate(1));
+
+    expect(detailNames(createPiece('p', 'w'))).toContain('pawn-head-collar');
+    expect(detailNames(createPiece('r', 'w'))).toContain('rook-crenellation');
+    expect(detailNames(createPiece('k', 'w'))).toContain('king-cross-arm');
+    expect(detailNames(createPiece('q', 'w'))).toContain('queen-crown-jewel');
+    expect(detailNames(createPiece('b', 'w'))).toContain('bishop-head-ring');
+    expect(detailNames(createPiece('n', 'w'))).toContain('knight-mane-carving');
+    expect(detailNames(createPiece('p', 'w'))).toContain('felt-pad');
+  });
+
+  it('uses black felt pads under the pieces', () => {
+    _setTemplate('p', fakeTemplate(1));
+    const felt = namedMesh(createPiece('p', 'w'), 'felt-pad');
+
+    expect(felt).toBeInstanceOf(THREE.Mesh);
+    expect(felt.material.color.getHex()).toBe(0x050505);
+  });
+
+  it('no longer uses the old green felt color', () => {
+    _setTemplate('p', fakeTemplate(1));
+    const felt = namedMesh(createPiece('p', 'w'), 'felt-pad');
+
+    expect(felt.material.color.getHex()).not.toBe(0x0d7a45);
+  });
+
+  it('keeps the felt pad a rough, non-shiny standard material', () => {
+    _setTemplate('p', fakeTemplate(1));
+    const felt = namedMesh(createPiece('p', 'w'), 'felt-pad');
+
+    expect(felt.material).toBeInstanceOf(THREE.MeshStandardMaterial);
+    expect(felt.material.roughness).toBeCloseTo(0.96, 5);
+  });
+
+  it('uses the same black felt pad color regardless of piece color', () => {
+    _setTemplate('r', fakeTemplate(1));
+    const whiteFelt = namedMesh(createPiece('r', 'w'), 'felt-pad');
+    const blackFelt = namedMesh(createPiece('r', 'b'), 'felt-pad');
+
+    expect(whiteFelt.material.color.getHex()).toBe(0x050505);
+    expect(blackFelt.material.color.getHex()).toBe(0x050505);
+  });
+
+  it('shares a single felt material instance across cloned pieces', () => {
+    _setTemplate('p', fakeTemplate(1));
+    const feltOne = namedMesh(createPiece('p', 'w'), 'felt-pad');
+    const feltTwo = namedMesh(createPiece('p', 'b'), 'felt-pad');
+
+    expect(feltOne.material).toBe(feltTwo.material);
+  });
+
+  it('wraps wood texture coordinates onto original and detail mesh geometry', () => {
+    _setTemplate('n', fakeTemplate(1));
+    const knight = createPiece('n', 'w');
+    const meshUvCounts = [];
+
+    knight.traverse((child) => {
+      if (child.isMesh && child.material === getPieceMaterial('w')) {
+        meshUvCounts.push(child.geometry.getAttribute('uv')?.count ?? 0);
+      }
+    });
+
+    expect(meshUvCounts.length).toBeGreaterThan(1);
+    expect(meshUvCounts.every((count) => count > 0)).toBe(true);
+  });
+
+  it('assigns the shared premium material to every original model mesh in a clone', () => {
+    _setTemplate('r', fakeTemplate(1));
+    const piece = createPiece('r', 'b');
+    const ebony = getPieceMaterial('b');
+
     piece.traverse((child) => {
-      if (child.isMesh) {
-        expect(child.material).toBe(black);
+      if (child.isMesh && !child.userData.pieceDetail) {
+        expect(child.material).toBe(ebony);
         expect(child.castShadow).toBe(true);
         expect(child.receiveShadow).toBe(true);
       }
