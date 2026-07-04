@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
+  BOARD_TEXTURES,
   CAMERA_MAX_POLAR_ANGLE,
   createBoardMaterials,
   createChessBoard,
@@ -25,6 +26,58 @@ describe('scene rendering helpers', () => {
     expect(frame.color.getHex()).toBe(0x2c2018);
     expect(light.clearcoat).toBeGreaterThan(0);
     expect(dark.clearcoat).toBeGreaterThan(0);
+  });
+
+  it('describes burl texture assets for the board woods', () => {
+    expect(BOARD_TEXTURES.light.url).toBe('textures/board/maple-burl.svg');
+    expect(BOARD_TEXTURES.dark.url).toBe('textures/board/walnut-burl.svg');
+    expect(BOARD_TEXTURES.frame.url).toBe('textures/board/walnut-burl.svg');
+    expect(BOARD_TEXTURES.light.repeat[0]).toBeGreaterThan(0);
+    expect(BOARD_TEXTURES.dark.repeat[1]).toBeGreaterThan(0);
+  });
+
+  it('loads burl texture maps into compatible board materials', () => {
+    const loadedUrls = [];
+    const loader = {
+      load(url) {
+        loadedUrls.push(url);
+        return new THREE.Texture();
+      },
+    };
+    const { light, dark, frame } = createBoardMaterials({ textureLoader: loader, baseUrl: '/game/' });
+
+    expect(loadedUrls).toEqual([
+      '/game/textures/board/maple-burl.svg',
+      '/game/textures/board/walnut-burl.svg',
+      '/game/textures/board/walnut-burl.svg',
+    ]);
+    for (const material of [light, dark, frame]) {
+      expect(material.map).toBeInstanceOf(THREE.Texture);
+      expect(material.map.colorSpace).toBe(THREE.SRGBColorSpace);
+      expect(material.map.wrapS).toBe(THREE.RepeatWrapping);
+      expect(material.map.wrapT).toBe(THREE.RepeatWrapping);
+      expect(material.map.anisotropy).toBeGreaterThan(1);
+    }
+  });
+
+  it('varies burl texture placement across neighboring squares', () => {
+    const loader = { load: () => new THREE.Texture() };
+    const board = createChessBoard({ textureLoader: loader, baseUrl: '/' });
+    const squareMaps = [];
+
+    board.traverse((child) => {
+      if (child.isMesh && child.name.startsWith('square-')) squareMaps.push(child.material.map);
+    });
+
+    expect(squareMaps.length).toBe(64);
+    expect(squareMaps.every((map) => map instanceof THREE.Texture)).toBe(true);
+
+    const transforms = squareMaps.map((map) => [
+      map.offset.x.toFixed(3),
+      map.offset.y.toFixed(3),
+      map.rotation.toFixed(3),
+    ].join(':'));
+    expect(new Set(transforms).size).toBeGreaterThan(16);
   });
 
   it('keeps frame geometry below the playable square surface', () => {

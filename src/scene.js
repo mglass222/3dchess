@@ -9,6 +9,23 @@ const LIGHT_SQ = 0xdac799;
 const DARK_SQ = 0x724528;
 
 export const CAMERA_MAX_POLAR_ANGLE = Math.PI / 2 - 0.04;
+export const BOARD_TEXTURES = {
+  light: {
+    url: 'textures/board/maple-burl.svg',
+    repeat: [1.8, 1.8],
+    anisotropy: 8,
+  },
+  dark: {
+    url: 'textures/board/walnut-burl.svg',
+    repeat: [1.65, 1.65],
+    anisotropy: 8,
+  },
+  frame: {
+    url: 'textures/board/walnut-burl.svg',
+    repeat: [2.5, 2.5],
+    anisotropy: 8,
+  },
+};
 
 export function applyRendererQuality(renderer) {
   renderer.shadowMap.enabled = true;
@@ -18,28 +35,87 @@ export function applyRendererQuality(renderer) {
   renderer.toneMappingExposure = 1.08;
 }
 
-export function createBoardMaterials() {
+function textureUrl(baseUrl, path) {
+  const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+  return `${base}${path}`;
+}
+
+function configureBoardTexture(texture, descriptor, transform = {}) {
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping;
+  texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(descriptor.repeat[0], descriptor.repeat[1]);
+  texture.offset.set(transform.offsetX ?? 0, transform.offsetY ?? 0);
+  texture.center.set(0.5, 0.5);
+  texture.rotation = transform.rotation ?? 0;
+  texture.anisotropy = descriptor.anisotropy;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function loadBoardTexture(textureLoader, key, baseUrl) {
+  const descriptor = BOARD_TEXTURES[key];
+  const texture = textureLoader.load(textureUrl(baseUrl, descriptor.url));
+  texture.name = key === 'light' ? 'maple-burl' : 'walnut-burl';
+  return configureBoardTexture(texture, descriptor);
+}
+
+function boardSquareTextureTransform(square) {
+  const file = square.charCodeAt(0) - 97;
+  const rank = Number(square[1]) - 1;
+  return {
+    offsetX: (file * 0.173 + rank * 0.071) % 1,
+    offsetY: (rank * 0.137 + file * 0.047) % 1,
+    rotation: ((file + rank) % 4) * (Math.PI / 2),
+  };
+}
+
+function createBoardSquareMaterial(baseMaterial, textureKey, square) {
+  if (!baseMaterial.map) return baseMaterial;
+  const material = baseMaterial.clone();
+  material.map = baseMaterial.map.clone();
+  configureBoardTexture(
+    material.map,
+    BOARD_TEXTURES[textureKey],
+    boardSquareTextureTransform(square),
+  );
+  return material;
+}
+
+export function createBoardMaterials({
+  textureLoader = null,
+  baseUrl = import.meta.env.BASE_URL,
+} = {}) {
+  const lightMap = textureLoader ? loadBoardTexture(textureLoader, 'light', baseUrl) : null;
+  const darkMap = textureLoader ? loadBoardTexture(textureLoader, 'dark', baseUrl) : null;
+  const frameMap = textureLoader ? loadBoardTexture(textureLoader, 'frame', baseUrl) : null;
   return {
     light: new THREE.MeshPhysicalMaterial({
       color: LIGHT_SQ,
+      map: lightMap,
       roughness: 0.44,
       metalness: 0.02,
       clearcoat: 0.26,
       clearcoatRoughness: 0.45,
+      userData: { boardTexture: BOARD_TEXTURES.light },
     }),
     dark: new THREE.MeshPhysicalMaterial({
       color: DARK_SQ,
+      map: darkMap,
       roughness: 0.48,
       metalness: 0.03,
       clearcoat: 0.22,
       clearcoatRoughness: 0.5,
+      userData: { boardTexture: BOARD_TEXTURES.dark },
     }),
     frame: new THREE.MeshPhysicalMaterial({
       color: 0x2c2018,
+      map: frameMap,
       roughness: 0.5,
       metalness: 0.04,
       clearcoat: 0.18,
       clearcoatRoughness: 0.38,
+      userData: { boardTexture: BOARD_TEXTURES.frame },
     }),
   };
 }
@@ -85,15 +161,24 @@ export function createStoneTable() {
   return table;
 }
 
-export function createChessBoard() {
+export function createChessBoard({
+  textureLoader = null,
+  baseUrl = import.meta.env.BASE_URL,
+} = {}) {
   const board = new THREE.Group();
   board.name = 'chess-board';
   const tile = new THREE.BoxGeometry(1, 0.18, 1);
-  const { light, dark, frame } = createBoardMaterials();
+  const { light, dark, frame } = createBoardMaterials({ textureLoader, baseUrl });
 
   for (const sq of allSquares()) {
     const { x, z } = squareToWorld(sq);
-    const mesh = new THREE.Mesh(tile, isLightSquare(sq) ? light : dark);
+    const textureKey = isLightSquare(sq) ? 'light' : 'dark';
+    const baseMaterial = textureKey === 'light' ? light : dark;
+    const mesh = new THREE.Mesh(
+      tile,
+      createBoardSquareMaterial(baseMaterial, textureKey, sq),
+    );
+    mesh.name = `square-${sq}`;
     mesh.position.set(x, -0.09, z); // top face at y=0
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -202,7 +287,7 @@ export class Scene {
     const table = createStoneTable();
     this.scene.add(table);
 
-    this.scene.add(createChessBoard());
+    this.scene.add(createChessBoard({ textureLoader: new THREE.TextureLoader() }));
   }
 
   _resize() {
