@@ -28,6 +28,13 @@ function detailNames(obj) {
   });
   return names;
 }
+function namedMesh(obj, name) {
+  let mesh = null;
+  obj.traverse((c) => {
+    if (!mesh && c.isMesh && c.name === name) mesh = c;
+  });
+  return mesh;
+}
 
 describe('pieces', () => {
   it('exposes the six piece types', () => {
@@ -108,6 +115,14 @@ describe('pieces', () => {
     expect(detailNames(createPiece('b', 'w'))).toContain('bishop-head-ring');
     expect(detailNames(createPiece('n', 'w'))).toContain('knight-mane-carving');
     expect(detailNames(createPiece('p', 'w'))).toContain('felt-pad');
+  });
+
+  it('uses black felt pads under the pieces', () => {
+    _setTemplate('p', fakeTemplate(1));
+    const felt = namedMesh(createPiece('p', 'w'), 'felt-pad');
+
+    expect(felt).toBeInstanceOf(THREE.Mesh);
+    expect(felt.material.color.getHex()).toBe(0x050505);
   });
 
   it('wraps wood texture coordinates onto original and detail mesh geometry', () => {
