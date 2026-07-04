@@ -20,17 +20,27 @@ export function createUI(container, handlers) {
   root.innerHTML = `
     <style>
       #ui { position:absolute; top:0; left:0; right:0; padding:10px 14px; display:flex;
-            gap:14px; align-items:center; background:linear-gradient(#0009,#0000);
+            flex-wrap:wrap; gap:10px 14px; align-items:center; background:linear-gradient(#0009,#0000);
             color:#eee; font:14px system-ui, sans-serif; pointer-events:none; }
       #ui > * { pointer-events:auto; }
+      #ui label { display:inline-flex; gap:7px; align-items:center; min-width:0; }
       #ui button, #ui select { background:#2a2f3a; color:#eee; border:1px solid #444;
             border-radius:6px; padding:6px 10px; cursor:pointer; }
+      #ui select { max-width:180px; }
+      #skill { width:130px; }
       #ui .status { margin-left:auto; font-weight:600; }
       #ui .thinking { opacity:.8; font-style:italic; }
       #promo { position:absolute; inset:0; display:none; align-items:center;
             justify-content:center; background:#0008; }
       #promo .box { background:#222; padding:16px; border-radius:10px; display:flex; gap:10px; }
       #promo button { font-size:28px; width:56px; height:56px; }
+      @media (max-width: 640px) {
+        #ui { padding:10px; gap:8px 10px; font-size:13px; align-items:flex-start; }
+        #ui button, #ui select { padding:6px 9px; }
+        #skill { width:96px; }
+        #theme { max-width:132px; }
+        #ui .status { flex-basis:100%; margin-left:0; text-align:right; }
+      }
     </style>
     <button id="newgame">New Game</button>
     <label>Play

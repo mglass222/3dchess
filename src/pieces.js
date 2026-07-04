@@ -8,9 +8,31 @@ const MODEL_FILE = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen',
 
 // Shared, long-lived materials (one per color) applied to every piece clone.
 const MATERIALS = {
-  w: new THREE.MeshStandardMaterial({ color: 0xede4cf, roughness: 0.5, metalness: 0.05 }),
-  b: new THREE.MeshStandardMaterial({ color: 0x3b2c24, roughness: 0.55, metalness: 0.05 }),
+  w: new THREE.MeshPhysicalMaterial({
+    color: 0xf3ead2,
+    roughness: 0.32,
+    metalness: 0.02,
+    clearcoat: 0.42,
+    clearcoatRoughness: 0.28,
+    sheen: 0.18,
+    sheenColor: 0xfff4df,
+    sheenRoughness: 0.7,
+  }),
+  b: new THREE.MeshPhysicalMaterial({
+    color: 0x17120f,
+    roughness: 0.38,
+    metalness: 0.04,
+    clearcoat: 0.34,
+    clearcoatRoughness: 0.32,
+    sheen: 0.08,
+    sheenColor: 0x5a4033,
+    sheenRoughness: 0.65,
+  }),
 };
+
+export function getPieceMaterial(color) {
+  return MATERIALS[color];
+}
 
 // type -> normalized template Object3D (base at y=0, centered on x/z). Populated
 // by loadPieces(); createPiece() clones these. Geometry/materials are shared across
