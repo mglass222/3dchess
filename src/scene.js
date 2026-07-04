@@ -190,13 +190,13 @@ export class Scene {
     frameMesh.receiveShadow = true;
     board.add(frameMesh);
 
-    const underlay = new THREE.Mesh(
-      new THREE.BoxGeometry(8.6, 0.3, 8.6),
+    const inset = new THREE.Mesh(
+      new THREE.BoxGeometry(8.05, 0.08, 8.05),
       frame,
     );
-    underlay.position.y = -0.32;
-    underlay.receiveShadow = true;
-    board.add(underlay);
+    inset.position.y = -0.03;
+    inset.receiveShadow = true;
+    board.add(inset);
 
     this.scene.add(board);
   }
