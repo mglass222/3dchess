@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   CAMERA_MAX_POLAR_ANGLE,
   createBoardMaterials,
+  createChessBoard,
   createStoneMaterial,
   createStoneTable,
   applyRendererQuality,
@@ -24,6 +25,32 @@ describe('scene rendering helpers', () => {
     expect(frame.color.getHex()).toBe(0x2c2018);
     expect(light.clearcoat).toBeGreaterThan(0);
     expect(dark.clearcoat).toBeGreaterThan(0);
+  });
+
+  it('keeps frame geometry below the playable square surface', () => {
+    const board = createChessBoard();
+    const materials = createBoardMaterials();
+    const frameMeshes = [];
+    const squareMeshes = [];
+
+    board.traverse((child) => {
+      if (!child.isMesh) return;
+      if (child.material.color.getHex() === materials.frame.color.getHex()) frameMeshes.push(child);
+      else squareMeshes.push(child);
+    });
+
+    expect(squareMeshes.length).toBe(64);
+    expect(frameMeshes.length).toBeGreaterThan(0);
+
+    const squareTop = Math.max(
+      ...squareMeshes.map((mesh) => new THREE.Box3().setFromObject(mesh).max.y),
+    );
+    const highestFrameTop = Math.max(
+      ...frameMeshes.map((mesh) => new THREE.Box3().setFromObject(mesh).max.y),
+    );
+
+    expect(squareTop).toBeCloseTo(0, 5);
+    expect(highestFrameTop).toBeLessThan(squareTop);
   });
 
   it('creates a stone material suitable for the table', () => {

@@ -85,6 +85,41 @@ export function createStoneTable() {
   return table;
 }
 
+export function createChessBoard() {
+  const board = new THREE.Group();
+  board.name = 'chess-board';
+  const tile = new THREE.BoxGeometry(1, 0.18, 1);
+  const { light, dark, frame } = createBoardMaterials();
+
+  for (const sq of allSquares()) {
+    const { x, z } = squareToWorld(sq);
+    const mesh = new THREE.Mesh(tile, isLightSquare(sq) ? light : dark);
+    mesh.position.set(x, -0.09, z); // top face at y=0
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    board.add(mesh);
+  }
+
+  const frameMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(8.8, 0.34, 8.8),
+    frame,
+  );
+  frameMesh.position.y = -0.2;
+  frameMesh.castShadow = true;
+  frameMesh.receiveShadow = true;
+  board.add(frameMesh);
+
+  const inset = new THREE.Mesh(
+    new THREE.BoxGeometry(8.05, 0.08, 8.05),
+    frame,
+  );
+  inset.position.y = -0.08;
+  inset.receiveShadow = true;
+  board.add(inset);
+
+  return board;
+}
+
 export class Scene {
   constructor(container) {
     this.container = container;
@@ -167,38 +202,7 @@ export class Scene {
     const table = createStoneTable();
     this.scene.add(table);
 
-    const board = new THREE.Group();
-    board.name = 'chess-board';
-    const tile = new THREE.BoxGeometry(1, 0.18, 1);
-    const { light, dark, frame } = createBoardMaterials();
-
-    for (const sq of allSquares()) {
-      const { x, z } = squareToWorld(sq);
-      const mesh = new THREE.Mesh(tile, isLightSquare(sq) ? light : dark);
-      mesh.position.set(x, -0.09, z); // top face at y=0
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      board.add(mesh);
-    }
-
-    const frameMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(8.8, 0.34, 8.8),
-      frame,
-    );
-    frameMesh.position.y = -0.2;
-    frameMesh.castShadow = true;
-    frameMesh.receiveShadow = true;
-    board.add(frameMesh);
-
-    const inset = new THREE.Mesh(
-      new THREE.BoxGeometry(8.05, 0.08, 8.05),
-      frame,
-    );
-    inset.position.y = -0.03;
-    inset.receiveShadow = true;
-    board.add(inset);
-
-    this.scene.add(board);
+    this.scene.add(createChessBoard());
   }
 
   _resize() {
