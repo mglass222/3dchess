@@ -121,7 +121,7 @@ const MATERIALS = {
 };
 
 const FELT_MATERIAL = new THREE.MeshStandardMaterial({
-  color: 0x0d7a45,
+  color: 0x050505,
   roughness: 0.96,
 });
 
