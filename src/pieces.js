@@ -15,6 +15,7 @@ const MATERIALS = {
     clearcoat: 0.42,
     clearcoatRoughness: 0.28,
     sheen: 0.18,
+    sheenColor: 0xfff4df,
     sheenRoughness: 0.7,
   }),
   b: new THREE.MeshPhysicalMaterial({
@@ -24,6 +25,7 @@ const MATERIALS = {
     clearcoat: 0.34,
     clearcoatRoughness: 0.32,
     sheen: 0.08,
+    sheenColor: 0x5a4033,
     sheenRoughness: 0.65,
   }),
 };

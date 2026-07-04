@@ -38,9 +38,11 @@ describe('scene rendering helpers', () => {
 
   it('loads burl texture maps into compatible board materials', () => {
     const loadedUrls = [];
+    const onErrors = [];
     const loader = {
-      load(url) {
+      load(url, onLoad, onProgress, onError) {
         loadedUrls.push(url);
+        onErrors.push(onError);
         return new THREE.Texture();
       },
     };
@@ -58,6 +60,8 @@ describe('scene rendering helpers', () => {
       expect(material.map.wrapT).toBe(THREE.RepeatWrapping);
       expect(material.map.anisotropy).toBeGreaterThan(1);
     }
+    expect(onErrors).toHaveLength(3);
+    expect(onErrors.every((onError) => typeof onError === 'function')).toBe(true);
   });
 
   it('varies burl texture placement across neighboring squares', () => {

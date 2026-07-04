@@ -78,6 +78,8 @@ describe('pieces', () => {
     expect(black.roughness).toBeCloseTo(0.38, 5);
     expect(white.clearcoat).toBeCloseTo(0.42, 5);
     expect(black.clearcoat).toBeCloseTo(0.34, 5);
+    expect(white.sheenColor.getHex()).toBe(0xfff4df);
+    expect(black.sheenColor.getHex()).toBe(0x5a4033);
   });
 
   it('assigns the shared premium material to every mesh in a clone', () => {

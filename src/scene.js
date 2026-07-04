@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
-  allSquares, squareToWorld, worldToSquare, isLightSquare,
+  allSquares, squareToWorld, worldToSquare, isLightSquare, fileIndex, rankIndex,
 } from './coords.js';
 import { getTheme, makeGradientTexture, makeStarfield, makeScenery, DEFAULT_THEME } from './themes.js';
 
@@ -55,14 +55,17 @@ function configureBoardTexture(texture, descriptor, transform = {}) {
 
 function loadBoardTexture(textureLoader, key, baseUrl) {
   const descriptor = BOARD_TEXTURES[key];
-  const texture = textureLoader.load(textureUrl(baseUrl, descriptor.url));
+  const url = textureUrl(baseUrl, descriptor.url);
+  const texture = textureLoader.load(url, undefined, undefined, (error) => {
+    console.warn(`Failed to load board texture "${key}" from ${url}`, error);
+  });
   texture.name = key === 'light' ? 'maple-burl' : 'walnut-burl';
   return configureBoardTexture(texture, descriptor);
 }
 
 function boardSquareTextureTransform(square) {
-  const file = square.charCodeAt(0) - 97;
-  const rank = Number(square[1]) - 1;
+  const file = fileIndex(square);
+  const rank = rankIndex(square);
   return {
     offsetX: (file * 0.173 + rank * 0.071) % 1,
     offsetY: (rank * 0.137 + file * 0.047) % 1,
