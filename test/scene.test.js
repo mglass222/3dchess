@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import {
   BOARD_TEXTURES,
   CAMERA_MAX_POLAR_ANGLE,
+  Scene,
   createBoardMaterials,
   createChessBoard,
   createStoneMaterial,
@@ -152,5 +153,37 @@ describe('scene rendering helpers', () => {
     expect(renderer.outputColorSpace).toBe(THREE.SRGBColorSpace);
     expect(renderer.toneMapping).toBe(THREE.ACESFilmicToneMapping);
     expect(renderer.toneMappingExposure).toBeCloseTo(1.08, 5);
+  });
+
+  it('disposes owned piece geometries when removing a piece', () => {
+    const ownedGeometry = new THREE.BoxGeometry();
+    const sharedGeometry = new THREE.SphereGeometry();
+    const sharedMaterial = new THREE.MeshBasicMaterial();
+    const piece = new THREE.Group();
+    let ownedDisposeCount = 0;
+    let sharedGeometryDisposed = false;
+    let sharedMaterialDisposed = false;
+
+    ownedGeometry.userData.pieceInstanceGeometry = true;
+    ownedGeometry.addEventListener('dispose', () => { ownedDisposeCount += 1; });
+    sharedGeometry.addEventListener('dispose', () => { sharedGeometryDisposed = true; });
+    sharedMaterial.addEventListener('dispose', () => { sharedMaterialDisposed = true; });
+
+    piece.add(new THREE.Mesh(ownedGeometry, sharedMaterial));
+    piece.add(new THREE.Mesh(ownedGeometry, sharedMaterial));
+    piece.add(new THREE.Mesh(sharedGeometry, sharedMaterial));
+
+    let removed = null;
+    const scene = Object.create(Scene.prototype);
+    scene.pieces = new Map([['e4', piece]]);
+    scene.scene = { remove: (obj) => { removed = obj; } };
+
+    scene.removePieceAt('e4');
+
+    expect(removed).toBe(piece);
+    expect(scene.pieces.has('e4')).toBe(false);
+    expect(ownedDisposeCount).toBe(1);
+    expect(sharedGeometryDisposed).toBe(false);
+    expect(sharedMaterialDisposed).toBe(false);
   });
 });

@@ -164,6 +164,16 @@ export function createStoneTable() {
   return table;
 }
 
+function disposePieceGeometries(object3d) {
+  const disposed = new Set();
+  object3d.traverse((child) => {
+    const geometry = child.isMesh ? child.geometry : null;
+    if (!geometry?.userData?.pieceInstanceGeometry || disposed.has(geometry)) return;
+    geometry.dispose();
+    disposed.add(geometry);
+  });
+}
+
 export function createChessBoard({
   textureLoader = null,
   baseUrl = import.meta.env.BASE_URL,
@@ -320,8 +330,8 @@ export class Scene {
     if (!obj) return;
     this.pieces.delete(square);
     this.scene.remove(obj);
-    // Geometry + materials are shared across piece clones and owned by the loaded
-    // templates in pieces.js, so they are NOT disposed here (they live app-long).
+    disposePieceGeometries(obj);
+    // Piece materials are shared app-wide and owned by pieces.js, so they live on.
   }
 
   clearPieces() {
