@@ -107,21 +107,21 @@ const MATERIALS = {
     sheenRoughness: 0.52,
   }),
   b: createWoodMaterial({
-    baseHex: 0x12100d,
-    grainHex: 0x32261d,
+    baseHex: 0x2c65a8,
+    grainHex: 0x74a7df,
     seed: 4.1,
     roughness: 0.23,
     metalness: 0.04,
     clearcoat: 0.62,
     clearcoatRoughness: 0.2,
     sheen: 0.1,
-    sheenColor: 0x6a4a38,
+    sheenColor: 0xb3d2f6,
     sheenRoughness: 0.58,
   }),
 };
 
 const FELT_MATERIAL = new THREE.MeshStandardMaterial({
-  color: 0x0d7a45,
+  color: 0x050505,
   roughness: 0.96,
 });
 

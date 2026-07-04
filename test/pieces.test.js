@@ -28,6 +28,13 @@ function detailNames(obj) {
   });
   return names;
 }
+function namedMesh(obj, name) {
+  let mesh = null;
+  obj.traverse((c) => {
+    if (!mesh && c.isMesh && c.name === name) mesh = c;
+  });
+  return mesh;
+}
 
 describe('pieces', () => {
   it('exposes the six piece types', () => {
@@ -76,26 +83,26 @@ describe('pieces', () => {
     expect(height(createPiece('k', 'w'))).toBeGreaterThan(height(createPiece('p', 'w')));
   });
 
-  it('uses glossy wood-grain ivory and ebony piece materials', () => {
+  it('uses glossy wood-grain ivory and blue piece materials', () => {
     const white = getPieceMaterial('w');
-    const black = getPieceMaterial('b');
+    const blue = getPieceMaterial('b');
 
     expect(white).toBeInstanceOf(THREE.MeshPhysicalMaterial);
-    expect(black).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+    expect(blue).toBeInstanceOf(THREE.MeshPhysicalMaterial);
     expect(white.color.getHex()).toBe(0xffffff);
-    expect(black.color.getHex()).toBe(0xffffff);
+    expect(blue.color.getHex()).toBe(0xffffff);
     expect(white.vertexColors).toBe(false);
-    expect(black.vertexColors).toBe(false);
+    expect(blue.vertexColors).toBe(false);
     expect(white.map).toBeInstanceOf(THREE.DataTexture);
-    expect(black.map).toBeInstanceOf(THREE.DataTexture);
+    expect(blue.map).toBeInstanceOf(THREE.DataTexture);
     expect(white.userData.woodGrain).toMatchObject({ baseHex: 0xd1a25d, grainHex: 0xe2bd7d });
-    expect(black.userData.woodGrain).toMatchObject({ baseHex: 0x12100d, grainHex: 0x32261d });
+    expect(blue.userData.woodGrain).toMatchObject({ baseHex: 0x2c65a8, grainHex: 0x74a7df });
     expect(white.roughness).toBeCloseTo(0.26, 5);
-    expect(black.roughness).toBeCloseTo(0.23, 5);
+    expect(blue.roughness).toBeCloseTo(0.23, 5);
     expect(white.clearcoat).toBeCloseTo(0.55, 5);
-    expect(black.clearcoat).toBeCloseTo(0.62, 5);
+    expect(blue.clearcoat).toBeCloseTo(0.62, 5);
     expect(white.sheenColor.getHex()).toBe(0xf8d18e);
-    expect(black.sheenColor.getHex()).toBe(0x6a4a38);
+    expect(blue.sheenColor.getHex()).toBe(0xb3d2f6);
   });
 
   it('adds classic detail meshes to each piece family', () => {
@@ -108,6 +115,14 @@ describe('pieces', () => {
     expect(detailNames(createPiece('b', 'w'))).toContain('bishop-head-ring');
     expect(detailNames(createPiece('n', 'w'))).toContain('knight-mane-carving');
     expect(detailNames(createPiece('p', 'w'))).toContain('felt-pad');
+  });
+
+  it('uses black felt pads under the pieces', () => {
+    _setTemplate('p', fakeTemplate(1));
+    const felt = namedMesh(createPiece('p', 'w'), 'felt-pad');
+
+    expect(felt).toBeInstanceOf(THREE.Mesh);
+    expect(felt.material.color.getHex()).toBe(0x050505);
   });
 
   it('wraps wood texture coordinates onto original and detail mesh geometry', () => {
@@ -128,11 +143,11 @@ describe('pieces', () => {
   it('assigns the shared premium material to every original model mesh in a clone', () => {
     _setTemplate('r', fakeTemplate(1));
     const piece = createPiece('r', 'b');
-    const ebony = getPieceMaterial('b');
+    const blue = getPieceMaterial('b');
 
     piece.traverse((child) => {
       if (child.isMesh && !child.userData.pieceDetail) {
-        expect(child.material).toBe(ebony);
+        expect(child.material).toBe(blue);
         expect(child.castShadow).toBe(true);
         expect(child.receiveShadow).toBe(true);
       }
