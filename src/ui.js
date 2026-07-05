@@ -1,4 +1,4 @@
-import { THEMES } from './themes.js';
+import { DEFAULT_THEME, THEMES } from './themes.js';
 import { PIECE_SETS } from './pieces.js';
 
 // Status string derived purely from game state (unit-tested).
@@ -101,7 +101,9 @@ export function createUI(container, handlers) {
     getSide() { return sideEl.value; },
     getSkill() { return Number(skillEl.value); },
     getTheme() { return themeEl.value; },
-    setTheme(key) { themeEl.value = key; },
+    setTheme(key) {
+      themeEl.value = THEMES.some((theme) => theme.key === key) ? key : DEFAULT_THEME;
+    },
     getPieceSet() { return pieceSetEl.value; },
     setPieceSet(key) { pieceSetEl.value = key; },
     // Show Q/R/B/N picker; resolves with the chosen piece letter.

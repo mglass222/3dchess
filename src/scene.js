@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   allSquares, squareToWorld, worldToSquare, isLightSquare, fileIndex, rankIndex,
 } from './coords.js';
-import { getTheme, makeGradientTexture, makeStarfield, makeScenery, DEFAULT_THEME } from './themes.js';
+import { getTheme, makeGradientTexture, makeStarfield, DEFAULT_THEME } from './themes.js';
 
 const LIGHT_SQ = 0xdac799;
 const DARK_SQ = 0x724528;
@@ -233,7 +233,6 @@ export class Scene {
     this.scene = new THREE.Scene();
     this._bgTexture = null;
     this._starfield = null;
-    this._scenery = null;
 
     this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
     this.camera.position.set(0, 9, 9);
@@ -389,8 +388,7 @@ export class Scene {
     this.highlights = [];
   }
 
-  // Apply a theme: a gradient sky (+ optional starfield), plus low-poly 3D landmark
-  // scenery for "place" themes.
+  // Apply a theme: a gradient sky, plus optional starfield.
   setTheme(key) {
     const theme = getTheme(key);
     this._clearBackdrop();
@@ -401,11 +399,7 @@ export class Scene {
       this._starfield = makeStarfield();
       this.scene.add(this._starfield);
     }
-    if (theme.scenery) {
-      this._scenery = makeScenery(theme);
-      this.scene.add(this._scenery);
-    }
-    this.currentTheme = key;
+    this.currentTheme = theme.key;
   }
 
   _clearBackdrop() {
@@ -415,13 +409,6 @@ export class Scene {
       this._starfield.geometry.dispose();
       this._starfield.material.dispose();
       this._starfield = null;
-    }
-    if (this._scenery) {
-      this.scene.remove(this._scenery);
-      this._scenery.traverse((o) => {
-        if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); }
-      });
-      this._scenery = null;
     }
   }
 
