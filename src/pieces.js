@@ -125,15 +125,15 @@ function createWoodMaterial({
 // Shared, long-lived materials (one per color) applied to every piece clone.
 const MATERIALS = {
   w: createWoodMaterial({
-    baseHex: 0xf3ecdd,
-    grainHex: 0xfffbf0,
+    baseHex: 0xe6d3b6,
+    grainHex: 0xf2e3ca,
     seed: 0.8,
     roughness: 0.26,
     metalness: 0.02,
     clearcoat: 0.55,
     clearcoatRoughness: 0.22,
     sheen: 0.16,
-    sheenColor: 0xffffff,
+    sheenColor: 0xffefd6,
     sheenRoughness: 0.52,
   }),
   b: createWoodMaterial({

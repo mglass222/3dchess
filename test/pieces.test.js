@@ -109,13 +109,13 @@ describe('pieces', () => {
     expect(blue.vertexColors).toBe(false);
     expect(white.map).toBeInstanceOf(THREE.DataTexture);
     expect(blue.map).toBeInstanceOf(THREE.DataTexture);
-    expect(white.userData.woodGrain).toMatchObject({ baseHex: 0xf3ecdd, grainHex: 0xfffbf0 });
+    expect(white.userData.woodGrain).toMatchObject({ baseHex: 0xe6d3b6, grainHex: 0xf2e3ca });
     expect(blue.userData.woodGrain).toMatchObject({ baseHex: 0x2c65a8, grainHex: 0x74a7df });
     expect(white.roughness).toBeCloseTo(0.26, 5);
     expect(blue.roughness).toBeCloseTo(0.23, 5);
     expect(white.clearcoat).toBeCloseTo(0.55, 5);
     expect(blue.clearcoat).toBeCloseTo(0.62, 5);
-    expect(white.sheenColor.getHex()).toBe(0xffffff);
+    expect(white.sheenColor.getHex()).toBe(0xffefd6);
     expect(blue.sheenColor.getHex()).toBe(0xb3d2f6);
   });
 
