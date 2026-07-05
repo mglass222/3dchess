@@ -30,4 +30,45 @@ describe('themes', () => {
       expect(keys).not.toContain(key);
     }
   });
+  it('is left with exactly the five mood themes, in order', () => {
+    expect(THEMES.map((theme) => theme.key)).toEqual([
+      'midnight', 'walnut', 'cosmos', 'dusk', 'emerald',
+    ]);
+  });
+  it('no theme carries leftover place-theme scenery fields', () => {
+    for (const t of THEMES) {
+      expect(t.scenery).toBeUndefined();
+      expect(t.ground).toBeUndefined();
+      expect(t.stone).toBeUndefined();
+    }
+  });
+  it('only the cosmos theme enables the starfield flag', () => {
+    const starry = THEMES.filter((t) => t.stars).map((t) => t.key);
+    expect(starry).toEqual(['cosmos']);
+  });
+  it('no longer exports the retired scenery builder', async () => {
+    const mod = await import('../src/themes.js');
+    expect(mod.makeScenery).toBeUndefined();
+  });
+  it('makeStarfield keeps every point within the requested shell radius', () => {
+    const radius = 40;
+    const stars = makeStarfield(200, radius);
+    const pos = stars.geometry.getAttribute('position');
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      const z = pos.getZ(i);
+      const dist = Math.sqrt(x * x + y * y + z * z);
+      expect(dist).toBeGreaterThanOrEqual(radius * 0.85 - 1e-9);
+      expect(dist).toBeLessThanOrEqual(radius + 1e-9);
+    }
+  });
+  it('makeStarfield handles a single-star edge case without NaNs', () => {
+    const stars = makeStarfield(1, 10);
+    const pos = stars.geometry.getAttribute('position');
+    expect(pos.count).toBe(1);
+    expect(Number.isFinite(pos.getX(0))).toBe(true);
+    expect(Number.isFinite(pos.getY(0))).toBe(true);
+    expect(Number.isFinite(pos.getZ(0))).toBe(true);
+  });
 });
