@@ -192,6 +192,7 @@ function applyWoodTextureCoordinates(mesh, color) {
 // for disposal when the board removes them.
 const templates = {};
 let activePieceSet = PIECE_SETS[DEFAULT_PIECE_SET];
+let loadPiecesId = 0;
 
 const TARGET_KING_HEIGHT = 1.4; // world units (1 = one square); relative sizes preserved
 
@@ -233,13 +234,24 @@ async function loadSeparateFiles(loader, set, baseUrl) {
 
 async function loadCombinedScene(loader, set, baseUrl) {
   const gltf = await loader.loadAsync(assetUrl(baseUrl, set.file));
+  gltf.scene.updateMatrixWorld(true);
   const raw = {};
   for (const type of PIECE_TYPES) {
     const node = findNodeByName(gltf.scene, set.nodes[type]);
     if (!node) throw new Error(`piece set "${set.key}" is missing node "${set.nodes[type]}"`);
-    raw[type] = node.clone(true);
+    raw[type] = cloneWithWorldTransform(node);
   }
   return raw;
+}
+
+function cloneWithWorldTransform(node) {
+  node.updateWorldMatrix(true, false);
+  const clone = node.clone(true);
+  clone.matrix.copy(node.matrixWorld);
+  clone.matrix.decompose(clone.position, clone.quaternion, clone.scale);
+  clone.matrixAutoUpdate = true;
+  clone.updateMatrixWorld(true);
+  return clone;
 }
 
 // Load + normalize all six models once. Browser-only (GLTFLoader/fetch). Must be
@@ -250,14 +262,19 @@ export async function loadPieces({
   loader = new GLTFLoader(),
 } = {}) {
   const nextPieceSet = getPieceSet(set);
+  const requestId = ++loadPiecesId;
   const raw = nextPieceSet.mode === 'combined-scene'
     ? await loadCombinedScene(loader, nextPieceSet, baseUrl)
     : await loadSeparateFiles(loader, nextPieceSet, baseUrl);
+  if (requestId !== loadPiecesId) throw new Error('piece load superseded');
 
   // One uniform scale derived from the king keeps relative piece heights correct.
   const kingBox = new THREE.Box3().setFromObject(raw.k);
   const scale = TARGET_KING_HEIGHT / (kingBox.max.y - kingBox.min.y);
-  for (const type of PIECE_TYPES) templates[type] = normalizeModel(raw[type], scale);
+  const nextTemplates = {};
+  for (const type of PIECE_TYPES) nextTemplates[type] = normalizeModel(raw[type], scale);
+  if (requestId !== loadPiecesId) throw new Error('piece load superseded');
+  for (const type of PIECE_TYPES) templates[type] = nextTemplates[type];
   activePieceSet = nextPieceSet;
 }
 

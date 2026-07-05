@@ -25,6 +25,8 @@ let aiColor = 'b';      // computer plays the side the human did not choose
 let aiBusy = false;
 let gameId = 0;         // bumped on every New Game; stale AI replies are discarded
 let booted = false;     // true once models + engine finish loading; gates UI handlers
+let pieceSetLoadId = 0; // bumped on each requested piece-set load; stale replies are ignored
+let appliedPieceSetKey = null;
 
 // --- board sync ---------------------------------------------------------------
 function syncBoardFromGame() {
@@ -104,17 +106,26 @@ function onThemeChange(key) {
 
 async function onPieceSetChange(key) {
   if (!booted) return;
+  const loadId = ++pieceSetLoadId;
+  const previousKey = appliedPieceSetKey ?? 'default';
   input.disable();
   ui.setStatus('Loading pieces...');
   try {
     await loadPieces({ set: key });
+    if (loadId !== pieceSetLoadId) return;
+    appliedPieceSetKey = key;
     try { localStorage.setItem('chess-piece-set', key); } catch { /* ignore */ }
     syncBoardFromGame();
     ui.setStatus(statusText(game));
-    if (!game.isGameOver() && game.turn() !== aiColor && !aiBusy) input.enable();
   } catch (err) {
+    if (loadId !== pieceSetLoadId) return;
     console.error('Failed to load piece set:', err);
+    ui.setPieceSet(previousKey);
     ui.setStatus(`Failed to load pieces - ${err.message}`);
+  } finally {
+    if (loadId === pieceSetLoadId && !game.isGameOver() && game.turn() !== aiColor && !aiBusy) {
+      input.enable();
+    }
   }
 }
 
@@ -173,6 +184,7 @@ if (import.meta.env.DEV) {
     if (savedPieceSet) ui.setPieceSet(savedPieceSet);
     if (!ui.getPieceSet()) ui.setPieceSet('default');
     await loadPieces({ set: ui.getPieceSet() });
+    appliedPieceSetKey = ui.getPieceSet();
     await ai.init();
     booted = true;
     let savedTheme = null;

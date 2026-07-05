@@ -206,4 +206,26 @@ describe('pieces', () => {
     expect(detailNames(knight)).not.toContain('felt-pad');
     expect(height(knight)).toBeGreaterThan(0.5);
   });
+
+  it('bakes ancestor transforms when loading nested combined-scene nodes', async () => {
+    const scene = new THREE.Group();
+    for (const type of PIECE_TYPES) {
+      const parent = new THREE.Group();
+      parent.scale.set(1, type === 'p' ? 3 : 1, 1);
+      const node = fakeTemplate(type === 'k' ? 2 : 1);
+      node.name = PIECE_SETS.downloaded.nodes[type].replace(/\s/g, '_');
+      parent.add(node);
+      scene.add(parent);
+    }
+    const loader = {
+      async loadAsync() {
+        return { scene };
+      },
+    };
+
+    await loadPieces({ set: 'downloaded', baseUrl: '/', loader });
+    const pawn = createPiece('p', 'w');
+
+    expect(height(pawn)).toBeCloseTo(2.1, 5);
+  });
 });
