@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import {
   createPiece,
+  loadPieces,
   normalizeModel,
   _setTemplate,
+  PIECE_SETS,
   PIECE_TYPES,
   getPieceMaterial,
 } from '../src/pieces.js';
@@ -75,6 +77,18 @@ describe('pieces', () => {
     expect((box.min.x + box.max.x) / 2).toBeCloseTo(0, 5);
     expect((box.min.z + box.max.z) / 2).toBeCloseTo(0, 5);
     expect(box.max.y - box.min.y).toBeCloseTo(8, 5); // height 4 * scale 2
+  });
+
+  it('normalizeModel preserves imported object scale while fitting target height', () => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1), new THREE.MeshStandardMaterial());
+    mesh.scale.setScalar(100);
+    mesh.position.y = 100;
+
+    const norm = normalizeModel(mesh, 0.01);
+    const box = new THREE.Box3().setFromObject(norm);
+
+    expect(box.min.y).toBeCloseTo(0, 5);
+    expect(box.max.y - box.min.y).toBeCloseTo(2, 5);
   });
 
   it('preserves relative heights (king taller than pawn)', () => {
@@ -152,5 +166,66 @@ describe('pieces', () => {
         expect(child.receiveShadow).toBe(true);
       }
     });
+  });
+
+  it('describes isolated default and downloaded model sets', () => {
+    expect(PIECE_SETS.default).toMatchObject({
+      mode: 'separate-files',
+      directory: 'models/Default',
+      addClassicDetails: true,
+    });
+    expect(PIECE_SETS.downloaded).toMatchObject({
+      mode: 'combined-scene',
+      file: 'models/Downloaded/realistic_chess_set_3d_model.glb',
+      addClassicDetails: false,
+    });
+    expect(Object.keys(PIECE_SETS.downloaded.nodes).sort()).toEqual([...PIECE_TYPES].sort());
+  });
+
+  it('loads a combined downloaded scene by sanitized node names', async () => {
+    const scene = new THREE.Group();
+    const requestedUrls = [];
+    for (const type of PIECE_TYPES) {
+      const node = fakeTemplate(type === 'k' ? 2 : 1);
+      node.name = PIECE_SETS.downloaded.nodes[type].replace(/\s/g, '_');
+      node.scale.setScalar(100);
+      scene.add(node);
+    }
+    const loader = {
+      async loadAsync(url) {
+        requestedUrls.push(url);
+        return { scene };
+      },
+    };
+
+    await loadPieces({ set: 'downloaded', baseUrl: '/game', loader });
+    const knight = createPiece('n', 'w');
+
+    expect(requestedUrls).toEqual(['/game/models/Downloaded/realistic_chess_set_3d_model.glb']);
+    expect(knight.rotation.y).toBeCloseTo(-Math.PI / 2, 5);
+    expect(detailNames(knight)).not.toContain('felt-pad');
+    expect(height(knight)).toBeGreaterThan(0.5);
+  });
+
+  it('bakes ancestor transforms when loading nested combined-scene nodes', async () => {
+    const scene = new THREE.Group();
+    for (const type of PIECE_TYPES) {
+      const parent = new THREE.Group();
+      parent.scale.set(1, type === 'p' ? 3 : 1, 1);
+      const node = fakeTemplate(type === 'k' ? 2 : 1);
+      node.name = PIECE_SETS.downloaded.nodes[type].replace(/\s/g, '_');
+      parent.add(node);
+      scene.add(parent);
+    }
+    const loader = {
+      async loadAsync() {
+        return { scene };
+      },
+    };
+
+    await loadPieces({ set: 'downloaded', baseUrl: '/', loader });
+    const pawn = createPiece('p', 'w');
+
+    expect(height(pawn)).toBeCloseTo(2.1, 5);
   });
 });

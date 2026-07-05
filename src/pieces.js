@@ -6,6 +6,36 @@ export const PIECE_TYPES = ['p', 'n', 'b', 'r', 'q', 'k'];
 // Piece type -> model filename (Ernest Rudnicki "chess-3d" set, MIT).
 const MODEL_FILE = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
 
+export const PIECE_SETS = {
+  default: {
+    key: 'default',
+    label: 'Default',
+    mode: 'separate-files',
+    directory: 'models/Default',
+    files: MODEL_FILE,
+    addClassicDetails: true,
+    rotations: { n: Math.PI / 2 },
+  },
+  downloaded: {
+    key: 'downloaded',
+    label: 'Downloaded',
+    mode: 'combined-scene',
+    file: 'models/Downloaded/realistic_chess_set_3d_model.glb',
+    nodes: {
+      p: 'White Pawn',
+      n: 'White Horse Left',
+      b: 'White Bishop Left',
+      r: 'White Rook Left',
+      q: 'White Queen',
+      k: 'White King',
+    },
+    addClassicDetails: false,
+    rotations: { n: -Math.PI / 2 },
+  },
+};
+
+const DEFAULT_PIECE_SET = 'default';
+
 function blendColor(base, grain, t) {
   return {
     r: Math.round(base.r + (grain.r - base.r) * t),
@@ -125,10 +155,6 @@ const FELT_MATERIAL = new THREE.MeshStandardMaterial({
   roughness: 0.96,
 });
 
-const PIECE_ROTATION_Y = {
-  n: Math.PI / 2,
-};
-
 function markPieceInstanceGeometry(geometry) {
   geometry.userData.pieceInstanceGeometry = true;
   return geometry;
@@ -165,29 +191,96 @@ function applyWoodTextureCoordinates(mesh, color) {
 // by loadPieces(); createPiece() clones these and marks per-piece geometry clones
 // for disposal when the board removes them.
 const templates = {};
+let activePieceSet = PIECE_SETS[DEFAULT_PIECE_SET];
+let loadPiecesId = 0;
 
 const TARGET_KING_HEIGHT = 1.4; // world units (1 = one square); relative sizes preserved
 
-// Load + normalize all six models once. Browser-only (GLTFLoader/fetch). Must be
-// awaited before the first createPiece() call.
-export async function loadPieces(baseUrl = import.meta.env.BASE_URL) {
-  const loader = new GLTFLoader();
+function assetUrl(baseUrl, path) {
+  const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
+  return `${base}${path}`;
+}
+
+function getPieceSet(key = DEFAULT_PIECE_SET) {
+  const set = PIECE_SETS[key];
+  if (!set) throw new Error(`unknown piece set: ${key}`);
+  return set;
+}
+
+function nodeKey(name) {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function findNodeByName(root, name) {
+  let match = null;
+  const target = nodeKey(name);
+  root.traverse((child) => {
+    if (match || nodeKey(child.name) !== target) return;
+    match = child;
+  });
+  return match;
+}
+
+async function loadSeparateFiles(loader, set, baseUrl) {
   const raw = {};
   await Promise.all(
     PIECE_TYPES.map(async (type) => {
-      const gltf = await loader.loadAsync(`${baseUrl}models/${MODEL_FILE[type]}.glb`);
+      const gltf = await loader.loadAsync(assetUrl(baseUrl, `${set.directory}/${set.files[type]}.glb`));
       raw[type] = gltf.scene;
     }),
   );
+  return raw;
+}
+
+async function loadCombinedScene(loader, set, baseUrl) {
+  const gltf = await loader.loadAsync(assetUrl(baseUrl, set.file));
+  gltf.scene.updateMatrixWorld(true);
+  const raw = {};
+  for (const type of PIECE_TYPES) {
+    const node = findNodeByName(gltf.scene, set.nodes[type]);
+    if (!node) throw new Error(`piece set "${set.key}" is missing node "${set.nodes[type]}"`);
+    raw[type] = cloneWithWorldTransform(node);
+  }
+  return raw;
+}
+
+function cloneWithWorldTransform(node) {
+  node.updateWorldMatrix(true, false);
+  const clone = node.clone(true);
+  clone.matrix.copy(node.matrixWorld);
+  clone.matrix.decompose(clone.position, clone.quaternion, clone.scale);
+  clone.matrixAutoUpdate = true;
+  clone.updateMatrixWorld(true);
+  return clone;
+}
+
+// Load + normalize all six models once. Browser-only (GLTFLoader/fetch). Must be
+// awaited before the first createPiece() call.
+export async function loadPieces({
+  baseUrl = import.meta.env.BASE_URL,
+  set = DEFAULT_PIECE_SET,
+  loader = new GLTFLoader(),
+} = {}) {
+  const nextPieceSet = getPieceSet(set);
+  const requestId = ++loadPiecesId;
+  const raw = nextPieceSet.mode === 'combined-scene'
+    ? await loadCombinedScene(loader, nextPieceSet, baseUrl)
+    : await loadSeparateFiles(loader, nextPieceSet, baseUrl);
+  if (requestId !== loadPiecesId) throw new Error('piece load superseded');
+
   // One uniform scale derived from the king keeps relative piece heights correct.
   const kingBox = new THREE.Box3().setFromObject(raw.k);
   const scale = TARGET_KING_HEIGHT / (kingBox.max.y - kingBox.min.y);
-  for (const type of PIECE_TYPES) templates[type] = normalizeModel(raw[type], scale);
+  const nextTemplates = {};
+  for (const type of PIECE_TYPES) nextTemplates[type] = normalizeModel(raw[type], scale);
+  if (requestId !== loadPiecesId) throw new Error('piece load superseded');
+  for (const type of PIECE_TYPES) templates[type] = nextTemplates[type];
+  activePieceSet = nextPieceSet;
 }
 
 // Scale uniformly, then sit the object on y=0 and center it on x/z. Returns a Group.
 export function normalizeModel(object3d, scale) {
-  object3d.scale.setScalar(scale);
+  object3d.scale.multiplyScalar(scale);
   object3d.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(object3d);
   object3d.position.x -= (box.min.x + box.max.x) / 2;
@@ -331,7 +424,7 @@ export function createPiece(type, color) {
   const tpl = templates[type];
   if (!tpl) throw new Error(`pieces not loaded: call loadPieces() before createPiece('${type}')`);
   const obj = tpl.clone(true);
-  obj.rotation.y += PIECE_ROTATION_Y[type] ?? 0;
+  obj.rotation.y += activePieceSet.rotations[type] ?? 0;
   obj.traverse((c) => {
     if (c.isMesh) {
       applyWoodTextureCoordinates(c, color);
@@ -340,7 +433,7 @@ export function createPiece(type, color) {
       c.receiveShadow = true;
     }
   });
-  addClassicDetails(obj, type, color);
+  if (activePieceSet.addClassicDetails) addClassicDetails(obj, type, color);
   obj.userData = { type, color };
   return obj;
 }
