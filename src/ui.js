@@ -1,4 +1,5 @@
 import { THEMES } from './themes.js';
+import { PIECE_SETS } from './pieces.js';
 
 // Status string derived purely from game state (unit-tested).
 export function statusText(game) {
@@ -13,7 +14,7 @@ export function statusText(game) {
 }
 
 // Builds the HTML overlay and returns handles the app uses to drive it.
-// handlers: { onNewGame(side, skill), onSkillChange(skill) }
+// handlers: { onNewGame(side, skill), onSkillChange(skill), onPieceSetChange(pieceSet) }
 export function createUI(container, handlers) {
   const root = document.createElement('div');
   root.id = 'ui';
@@ -53,6 +54,9 @@ export function createUI(container, handlers) {
     <label>Theme
       <select id="theme"></select>
     </label>
+    <label>Pieces
+      <select id="pieceset"></select>
+    </label>
     <span class="status" id="status">White to move</span>
     <div id="promo"><div class="box"></div></div>
   `;
@@ -65,13 +69,21 @@ export function createUI(container, handlers) {
   const promo = root.querySelector('#promo');
   const promoBox = promo.querySelector('.box');
   const themeEl = root.querySelector('#theme');
+  const pieceSetEl = root.querySelector('#pieceset');
   for (const t of THEMES) {
     const opt = document.createElement('option');
     opt.value = t.key;
     opt.textContent = t.label;
     themeEl.appendChild(opt);
   }
+  for (const set of Object.values(PIECE_SETS)) {
+    const opt = document.createElement('option');
+    opt.value = set.key;
+    opt.textContent = set.label;
+    pieceSetEl.appendChild(opt);
+  }
   themeEl.addEventListener('change', () => handlers.onThemeChange(themeEl.value));
+  pieceSetEl.addEventListener('change', () => handlers.onPieceSetChange(pieceSetEl.value));
 
   root.querySelector('#newgame').addEventListener('click', () => {
     handlers.onNewGame(sideEl.value, Number(skillEl.value));
@@ -90,6 +102,8 @@ export function createUI(container, handlers) {
     getSkill() { return Number(skillEl.value); },
     getTheme() { return themeEl.value; },
     setTheme(key) { themeEl.value = key; },
+    getPieceSet() { return pieceSetEl.value; },
+    setPieceSet(key) { pieceSetEl.value = key; },
     // Show Q/R/B/N picker; resolves with the chosen piece letter.
     showPromotion(color) {
       promoBox.innerHTML = '';

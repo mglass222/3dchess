@@ -12,7 +12,12 @@ const sceneEl = document.getElementById('scene');
 
 const scene = new Scene(sceneEl);
 const game = new Game();
-const ui = createUI(appEl, { onNewGame, onSkillChange, onThemeChange });
+const ui = createUI(appEl, {
+  onNewGame,
+  onSkillChange,
+  onThemeChange,
+  onPieceSetChange,
+});
 const input = new Input(scene, game, { onPromotion: (color) => ui.showPromotion(color) });
 
 const ai = new AI(createEngine(), { skill: ui.getSkill(), movetime: 1000 });
@@ -97,6 +102,22 @@ function onThemeChange(key) {
   try { localStorage.setItem('chess-theme', key); } catch { /* ignore */ }
 }
 
+async function onPieceSetChange(key) {
+  if (!booted) return;
+  input.disable();
+  ui.setStatus('Loading pieces...');
+  try {
+    await loadPieces({ set: key });
+    try { localStorage.setItem('chess-piece-set', key); } catch { /* ignore */ }
+    syncBoardFromGame();
+    ui.setStatus(statusText(game));
+    if (!game.isGameOver() && game.turn() !== aiColor && !aiBusy) input.enable();
+  } catch (err) {
+    console.error('Failed to load piece set:', err);
+    ui.setStatus(`Failed to load pieces - ${err.message}`);
+  }
+}
+
 function onSkillChange(skill) {
   if (!booted) return;
   ai.setSkill(skill);
@@ -147,7 +168,11 @@ if (import.meta.env.DEV) {
 (async function boot() {
   try {
     ui.setStatus('Loading…');
-    await loadPieces();
+    let savedPieceSet = null;
+    try { savedPieceSet = localStorage.getItem('chess-piece-set'); } catch { /* ignore */ }
+    if (savedPieceSet) ui.setPieceSet(savedPieceSet);
+    if (!ui.getPieceSet()) ui.setPieceSet('default');
+    await loadPieces({ set: ui.getPieceSet() });
     await ai.init();
     booted = true;
     let savedTheme = null;
