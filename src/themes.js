@@ -1,15 +1,21 @@
 import * as THREE from 'three';
 
 // Self-contained gradient backgrounds. Cosmos also adds a procedural starfield.
+// `fog` is authored explicitly (~70% of `bottom`) rather than derived from it:
+// fogged geometry is mostly downward-facing and lit from above, so using the
+// raw `bottom` value makes distant table *glow brighter* than nearby table —
+// an inversion that reads as a bug. Dusk's `bottom` is a saturated orange that
+// would tint the whole table, so it gets a desaturated fog and a lower density.
 export const THEMES = [
-  { key: 'midnight', label: 'Midnight', top: '#0c0f17', bottom: '#232a3d' },
-  { key: 'walnut', label: 'Walnut Study', top: '#180f08', bottom: '#5e4029' },
-  { key: 'cosmos', label: 'Cosmos', top: '#01010a', bottom: '#191540', stars: true },
-  { key: 'dusk', label: 'Dusk', top: '#1f1140', bottom: '#c9663d' },
-  { key: 'emerald', label: 'Emerald', top: '#05130e', bottom: '#2f6048' },
+  { key: 'midnight', label: 'Midnight',     top: '#0c0f17', bottom: '#232a3d', fog: '#141926' },
+  { key: 'walnut',   label: 'Walnut Study', top: '#180f08', bottom: '#5e4029', fog: '#3a281a' },
+  { key: 'cosmos',   label: 'Cosmos',       top: '#01010a', bottom: '#191540', fog: '#0f0d28', stars: true },
+  { key: 'dusk',     label: 'Dusk',         top: '#1f1140', bottom: '#c9663d', fog: '#6e4331', density: 0.015 },
+  { key: 'emerald',  label: 'Emerald',      top: '#05130e', bottom: '#2f6048', fog: '#1c3a2b' },
 ];
 
 export const DEFAULT_THEME = 'midnight';
+export const DEFAULT_FOG_DENSITY = 0.02;
 
 export function getTheme(key) {
   return THEMES.find((t) => t.key === key) ?? THEMES[0];
@@ -50,6 +56,9 @@ export function makeStarfield(count = 1400, radius = 46) {
     sizeAttenuation: true,
     transparent: true,
     opacity: 0.9,
+    // Material.fog defaults to true. The star shell sits at radius 46, where
+    // density 0.02 fogs the far half by ~89% — opt out or Cosmos loses its stars.
+    fog: false,
   });
   const points = new THREE.Points(geom, mat);
   points.name = 'starfield';

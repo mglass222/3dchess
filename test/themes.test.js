@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { THEMES, DEFAULT_THEME, getTheme, makeStarfield } from '../src/themes.js';
+import {
+  THEMES, DEFAULT_THEME, getTheme, makeStarfield,
+} from '../src/themes.js';
 
 describe('themes', () => {
   it('defines several themes with gradient colors', () => {
@@ -9,6 +11,7 @@ describe('themes', () => {
       expect(typeof t.label).toBe('string');
       expect(t.top).toMatch(/^#[0-9a-f]{6}$/i);
       expect(t.bottom).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(t.fog).toMatch(/^#[0-9a-f]{6}$/i);
     }
   });
   it('has a valid default theme', () => {
@@ -23,6 +26,10 @@ describe('themes', () => {
     expect(stars.isPoints).toBe(true);
     expect(stars.geometry.getAttribute('position').count).toBe(100);
     expect(stars.name).toBe('starfield');
+  });
+  it('makeStarfield opts its material out of scene fog', () => {
+    // The shell sits at a large radius, so fogging it would gut the Cosmos theme.
+    expect(makeStarfield(10).material.fog).toBe(false);
   });
   it('does not include the retired place themes', () => {
     const keys = THEMES.map((theme) => theme.key);

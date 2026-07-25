@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- The feComponentTransfer tone targets below (and DARK_SQ/LIGHT_SQ in
+       scene.js, which were calibrated against this file's rendered output)
+       only land because SVG filters default to
+       color-interpolation-filters: linearRGB. If anyone "fixes" that to
+       sRGB (explicitly or via a browser/library default change), this wood
+       renders roughly 30% darker and silently breaks the calibration. -->
+  <defs>
+    <filter id="mapleGrain" filterUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <!-- Directional figure: fine cross-grain frequency, long streaks along the grain axis. -->
+      <feTurbulence type="fractalNoise" baseFrequency="0.055 0.0022" numOctaves="4" seed="34"
+                    stitchTiles="stitch" result="figureNoise"/>
+      <feColorMatrix in="figureNoise" type="saturate" values="0" result="figureGray"/>
+      <feComponentTransfer in="figureGray" result="figureToned">
+        <feFuncR type="linear" slope="0.55" intercept="0.245"/>
+        <feFuncG type="linear" slope="0.55" intercept="0.245"/>
+        <feFuncB type="linear" slope="0.55" intercept="0.200"/>
+        <feFuncA type="linear" slope="0" intercept="1"/>
+      </feComponentTransfer>
+
+      <!-- Sparse pore layer: small, scattered darker flecks, not a repeating rosette. -->
+      <feTurbulence type="turbulence" baseFrequency="0.9 0.9" numOctaves="2" seed="53"
+                    stitchTiles="stitch" result="poreNoise"/>
+      <feColorMatrix in="poreNoise" type="saturate" values="0" result="poreGray"/>
+      <feComponentTransfer in="poreGray" result="poreMask">
+        <feFuncR type="discrete" tableValues="1 1 1 1 0.78 0.60"/>
+        <feFuncG type="discrete" tableValues="1 1 1 1 0.78 0.60"/>
+        <feFuncB type="discrete" tableValues="1 1 1 1 0.78 0.60"/>
+        <feFuncA type="linear" slope="0" intercept="1"/>
+      </feComponentTransfer>
+
+      <feBlend in="figureToned" in2="poreMask" mode="multiply" result="withPores"/>
+      <feComponentTransfer in="withPores">
+        <feFuncA type="linear" slope="0" intercept="1"/>
+      </feComponentTransfer>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" filter="url(#mapleGrain)"/>
+</svg>

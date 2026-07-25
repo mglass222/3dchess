@@ -1,29 +1,56 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
   allSquares, squareToWorld, worldToSquare, isLightSquare, fileIndex, rankIndex,
 } from './coords.js';
-import { getTheme, makeGradientTexture, makeStarfield, DEFAULT_THEME } from './themes.js';
+import {
+  getTheme, makeGradientTexture, makeStarfield, DEFAULT_THEME, DEFAULT_FOG_DENSITY,
+} from './themes.js';
+import { CONTACT_SHADOW_Y, setPieceEnvironmentMap } from './pieces.js';
 
-const LIGHT_SQ = 0xdac799;
-const DARK_SQ = 0x724528;
+const LIGHT_SQ = 0xe8d6ae; // was 0xdac799 — the texture mean dropped ~0.88 -> ~0.74,
+                            // so the colour comes up to hold the same on-screen value
+// was 0x724528. Measured in the browser at the default orbit: with the neutral
+// grain map, 0x4a3426 rendered dark squares at 13.2% luminance and 0x584032 at
+// 15.8% — both short of the 18-24% that gives the darks visible grain. 0x6e5340
+// lands at 20.7%, putting light:dark at 3.1:1 (it was ~8:1 with the burl map).
+const DARK_SQ = 0x6e5340;
 
 export const CAMERA_MAX_POLAR_ANGLE = Math.PI / 2 - 0.04;
+export const ENVIRONMENT_BLUR = 0.04;
+// Fallback IBL strength ONLY. three reads scene.environmentIntensity in exactly
+// one place (WebGLRenderer: isMeshStandardMaterial && material.envMap === null
+// && scene.environment !== null), so it applies to standard materials that did
+// not get their own envMap from applyEnvironmentMap. Today there are none — the
+// board (64 square clones), frame, stone and both piece materials are all
+// stamped, and everything else in the scene is MeshBasic/Points, which ignore
+// IBL entirely. So changing this value currently changes nothing on screen;
+// per-material envMapIntensity is the live knob. Kept as a sane default for any
+// standard material added later that misses the traverse.
+const ENVIRONMENT_INTENSITY = 0.25;
 export const BOARD_TEXTURES = {
   light: {
-    url: 'textures/board/maple-burl.svg',
-    repeat: [1.8, 1.8],
-    anisotropy: 8,
+    url: 'textures/board/maple-grain.svg',
+    // Light and dark must share a physical grain scale — 1.8 vs 1.65 was an
+    // accident that rendered two woods at different physical sizes.
+    repeat: [1.0, 1.0],
+    anisotropy: 16,
   },
   dark: {
-    url: 'textures/board/walnut-burl.svg',
-    repeat: [1.65, 1.65],
-    anisotropy: 8,
+    url: 'textures/board/walnut-grain.svg',
+    repeat: [1.0, 1.0],
+    anisotropy: 16,
   },
   frame: {
-    url: 'textures/board/walnut-burl.svg',
-    repeat: [2.5, 2.5],
-    anisotropy: 8,
+    // The frame is BoxGeometry(8.8, ...) carrying the same 0-1 UV span as a
+    // single square, so a repeat equal to the squares' (or a small multiple)
+    // would render border grain far too coarse or align tile boundaries into
+    // a visible band. 7.2 gives ~1.22 world units per tile — close to the
+    // squares' physical scale without being an integer multiple of it.
+    url: 'textures/board/walnut-grain.svg',
+    repeat: [7.2, 7.2],
+    anisotropy: 16,
   },
 };
 
@@ -32,7 +59,58 @@ export function applyRendererQuality(renderer) {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.08;
+  renderer.toneMappingExposure = 1.00;
+}
+
+// Dependency-injectable so tests can stub the PMREM/GL machinery under node.
+// Disposes the throwaway generator and room; the returned render target owns
+// the texture and must survive (PMREMGenerator.dispose() only frees its own
+// blur materials and ping-pong target).
+export function createEnvironment({
+  renderer,
+  pmremFactory = (r) => new THREE.PMREMGenerator(r),
+  roomFactory = () => new RoomEnvironment(),
+} = {}) {
+  const generator = pmremFactory(renderer);
+  const room = roomFactory();
+  try {
+    const renderTarget = generator.fromScene(room, ENVIRONMENT_BLUR);
+    return { texture: renderTarget.texture, renderTarget };
+  } finally {
+    // Throwaway scaffolding. The returned render target owns the texture and
+    // must survive; PMREMGenerator.dispose() frees only its blur materials
+    // and ping-pong target.
+    room.dispose();
+    generator.dispose();
+  }
+}
+
+// Assigns `texture` as `envMap` on every isMeshStandardMaterial material found
+// under `root` (MeshPhysicalMaterial extends MeshStandardMaterial, so board
+// and stone materials are included). This is required for envMapIntensity to
+// have any effect at all: three's refreshUniformsStandard only applies
+// material.envMapIntensity when material.envMap is set, and setProgram only
+// falls back to scene.environmentIntensity when material.envMap is null -
+// with scene.environment as the sole IBL source (as it was before this
+// function existed), every material's intensity was really just
+// scene.environmentIntensity, and the six tuned envMapIntensity values were
+// dead. Adding an envMap flips the shader's USE_ENVMAP define, so
+// needsUpdate must be set to force a recompile. `seen` guards against
+// redundantly touching a material more than once in one traversal (cheap
+// insurance; harmless either way since the envMap === texture check below
+// already no-ops a repeat assignment).
+export function applyEnvironmentMap(root, texture) {
+  const seen = new Set();
+  root.traverse((child) => {
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) {
+      if (!material || !material.isMeshStandardMaterial) continue;
+      if (seen.has(material) || material.envMap === texture) continue;
+      seen.add(material);
+      material.envMap = texture;
+      material.needsUpdate = true;
+    }
+  });
 }
 
 function textureUrl(baseUrl, path) {
@@ -59,7 +137,7 @@ function loadBoardTexture(textureLoader, key, baseUrl) {
   const texture = textureLoader.load(url, undefined, undefined, (error) => {
     console.warn(`Failed to load board texture "${key}" from ${url}`, error);
   });
-  texture.name = key === 'light' ? 'maple-burl' : 'walnut-burl';
+  texture.name = key === 'light' ? 'maple-grain' : 'walnut-grain';
   return configureBoardTexture(texture, descriptor);
 }
 
@@ -69,6 +147,14 @@ function boardSquareTextureTransform(square) {
   return {
     offsetX: (file * 0.173 + rank * 0.071) % 1,
     offsetY: (rank * 0.137 + file * 0.047) % 1,
+    // Deliberately `% 4`, not `% 2`. isLightSquare is (file+rank) % 2 === 1, so
+    // light squares land on 90deg/270deg and dark squares on 0deg/180deg. The
+    // wood grain is directional, so 0deg and 180deg are the *same* axis: every
+    // dark square's grain runs one way, every light square's grain runs
+    // perpendicular to it, and the 180deg flip among same-axis squares breaks
+    // up the repeat so the tiling doesn't line up square-to-square. That's
+    // how a veneered tournament board is actually built — don't "simplify"
+    // this to `% 2`, it would make every square's grain run the same way.
     rotation: ((file + rank) % 4) * (Math.PI / 2),
   };
 }
@@ -92,6 +178,13 @@ export function createBoardMaterials({
   const lightMap = textureLoader ? loadBoardTexture(textureLoader, 'light', baseUrl) : null;
   const darkMap = textureLoader ? loadBoardTexture(textureLoader, 'dark', baseUrl) : null;
   const frameMap = textureLoader ? loadBoardTexture(textureLoader, 'frame', baseUrl) : null;
+  // envMapIntensity below is only live because applyEnvironmentMap gives each of
+  // these materials its own envMap; three ignores the per-material value for a
+  // material relying on scene.environment alone. Measured at the default orbit:
+  // the originally-planned 0.55/0.50/0.45/0.30 pushed light squares to 73% and
+  // darks to 29% (both over target) and the frame mean to 87. These values land
+  // light 64.8% / dark 20.6% at a 3.14:1 ratio. The board deliberately sits well
+  // below the pieces (0.9/1.0) — the pieces should be the reflective objects.
   return {
     light: new THREE.MeshPhysicalMaterial({
       color: LIGHT_SQ,
@@ -100,6 +193,7 @@ export function createBoardMaterials({
       metalness: 0.02,
       clearcoat: 0.26,
       clearcoatRoughness: 0.45,
+      envMapIntensity: 0.28,
       userData: { boardTexture: BOARD_TEXTURES.light },
     }),
     dark: new THREE.MeshPhysicalMaterial({
@@ -109,6 +203,7 @@ export function createBoardMaterials({
       metalness: 0.03,
       clearcoat: 0.22,
       clearcoatRoughness: 0.5,
+      envMapIntensity: 0.25,
       userData: { boardTexture: BOARD_TEXTURES.dark },
     }),
     frame: new THREE.MeshPhysicalMaterial({
@@ -118,6 +213,7 @@ export function createBoardMaterials({
       metalness: 0.04,
       clearcoat: 0.18,
       clearcoatRoughness: 0.38,
+      envMapIntensity: 0.22,
       userData: { boardTexture: BOARD_TEXTURES.frame },
     }),
   };
@@ -128,6 +224,7 @@ export function createStoneMaterial() {
     color: 0x7d7868,
     roughness: 0.94,
     metalness: 0,
+    envMapIntensity: 0.15,
   });
 }
 
@@ -218,6 +315,27 @@ export function createChessBoard({
   return board;
 }
 
+// Pure helper so setTheme can mutate the scene's single long-lived FogExp2
+// instance rather than replacing it (see the constructor for why identity
+// matters here).
+export function applyThemeFog(fog, theme) {
+  fog.color.set(theme.fog ?? theme.bottom);
+  fog.density = theme.density ?? DEFAULT_FOG_DENSITY;
+  return fog;
+}
+
+// Cancels the parent's arc-hop lift on the piece's contact-shadow decal so it
+// stays welded to the board plane in world space, while x/z still track the
+// piece through the parent transform. Call after every write to
+// pieceObject.position.y during movePiece's animation, including the
+// superseded branch - otherwise a move that gets superseded mid-arc leaves
+// the decal permanently offset by whatever the lift was at that instant.
+export function syncContactShadow(pieceObject) {
+  const shadow = pieceObject.userData?.contactShadow;
+  if (!shadow) return;
+  shadow.position.y = CONTACT_SHADOW_Y - pieceObject.position.y;
+}
+
 export class Scene {
   constructor(container) {
     this.container = container;
@@ -231,6 +349,11 @@ export class Scene {
     this.domElement = this.renderer.domElement;
 
     this.scene = new THREE.Scene();
+    // One long-lived instance: WebGLRenderer keys shader recompiles on fog IDENTITY
+    // (materialProperties.fog !== fog), so setTheme mutates this rather than
+    // replacing it — otherwise every material in the scene recompiles on a theme switch.
+    this._fog = new THREE.FogExp2(0x000000, DEFAULT_FOG_DENSITY);
+    this.scene.fog = this._fog;
     this._bgTexture = null;
     this._starfield = null;
 
@@ -248,8 +371,18 @@ export class Scene {
     this.controls.minPolarAngle = 0.05;
     this.controls.maxPolarAngle = CAMERA_MAX_POLAR_ANGLE;
 
+    // Must run after applyRendererQuality (above) because fromScene issues real
+    // draw calls, and before the first render so scene.environment is set before
+    // any envMap shader recompile. _addLights reads this._envFailed (set here)
+    // to decide whether it needs to restore pre-IBL light levels.
+    this._addEnvironment();
     this._addLights();
     this._buildBoard();
+    // Board/stone materials are built by _buildBoard, so this traverse must
+    // come after it - unlike piece materials (module-scope singletons wired
+    // up inside _addEnvironment via setPieceEnvironmentMap), the board group
+    // doesn't exist yet when _addEnvironment runs.
+    if (this._envTexture) applyEnvironmentMap(this.scene, this._envTexture);
     this.setTheme(DEFAULT_THEME);
 
     // Invisible plane at the board top for raycasting empty squares.
@@ -273,11 +406,49 @@ export class Scene {
     this._animate();
   }
 
-  _addLights() {
-    this.scene.add(new THREE.HemisphereLight(0xf4fff4, 0x33402c, 0.7));
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.18));
+  _addEnvironment() {
+    this._envRenderTarget = null;
+    this._envTexture = null;
+    this._envFailed = false;
+    try {
+      const { texture, renderTarget } = createEnvironment({ renderer: this.renderer });
+      this.scene.environment = texture;
+      this.scene.environmentIntensity = ENVIRONMENT_INTENSITY;
+      this._envRenderTarget = renderTarget;
+      this._envTexture = texture;
+      // Piece materials are shared, long-lived singletons (pieces.js
+      // MATERIALS) and pieces load asynchronously, so a one-time scene
+      // traverse here would miss any piece created later - this call covers
+      // every piece created before or after regardless.
+      setPieceEnvironmentMap(texture);
+    } catch (error) {
+      console.warn('Environment map unavailable; falling back to lights only', error);
+      this._envFailed = true;
+      // Clear these too: _addLights restores the brighter pre-IBL rig when
+      // _envFailed, so leaving a texture behind would let applyEnvironmentMap
+      // also run and double-light the scene.
+      this._envTexture = null;
+      this._envRenderTarget = null;
+    }
+  }
 
-    const key = new THREE.DirectionalLight(0xfff1cf, 2.3);
+  _addLights() {
+    // The env map normally supplies ambient fill (see _addEnvironment), so
+    // these punctual lights are reduced rather than stacked on top of it -
+    // *unless* PMREM generation threw, in which case there is no IBL to make up
+    // the difference and we restore the pre-IBL intensities/exposure instead of
+    // rendering ~30-40% darker than before IBL landed.
+    // Narrow by design: a lost context makes render() a no-op rather than throw
+    // (so fromScene yields a black map, not an error), software GL just runs
+    // slowly, and a machine with no WebGL2 at all already died constructing the
+    // renderer. This covers PMREM failing outright - e.g. render-target OOM.
+    const lit = !this._envFailed;
+
+    this.hemiLight = new THREE.HemisphereLight(0xf4fff4, 0x33402c, lit ? 0.22 : 0.7);
+    this.scene.add(this.hemiLight);
+
+    this.keyLight = new THREE.DirectionalLight(0xfff1cf, lit ? 1.85 : 2.3);
+    const key = this.keyLight;
     key.position.set(6.5, 11, 5);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -290,9 +461,11 @@ export class Scene {
     key.shadow.bias = -0.00015;
     this.scene.add(key);
 
-    const rim = new THREE.DirectionalLight(0xbad7ff, 0.65);
-    rim.position.set(-8, 5, -7);
-    this.scene.add(rim);
+    this.rimLight = new THREE.DirectionalLight(0xbad7ff, lit ? 0.4 : 0.65);
+    this.rimLight.position.set(-8, 5, -7);
+    this.scene.add(this.rimLight);
+
+    if (!lit) this.renderer.toneMappingExposure = 1.08;
   }
 
   _buildBoard() {
@@ -356,14 +529,23 @@ export class Scene {
     const t0 = performance.now();
     return new Promise((resolve) => {
       const step = (now) => {
-        if (obj.userData._moveGen !== myGen) { resolve(); return; } // superseded
+        if (obj.userData._moveGen !== myGen) {
+          // Superseded mid-arc: without this, the decal is left permanently
+          // offset by whatever the lift was at the moment of supersession -
+          // a blob floating in mid-air. Reachable via chained movePiece calls
+          // (castling) and a New Game that resyncs the board mid-animation.
+          syncContactShadow(obj);
+          resolve();
+          return;
+        }
         const t = Math.min(1, (now - t0) / duration);
         const ease = t * t * (3 - 2 * t); // smoothstep
         obj.position.x = start.x + (end.x - start.x) * ease;
         obj.position.z = start.z + (end.z - start.z) * ease;
         obj.position.y = Math.sin(t * Math.PI) * lift; // arc hop
+        syncContactShadow(obj);
         if (t < 1) requestAnimationFrame(step);
-        else { obj.position.set(end.x, 0, end.z); resolve(); }
+        else { obj.position.set(end.x, 0, end.z); syncContactShadow(obj); resolve(); }
       };
       requestAnimationFrame(step);
     });
@@ -395,6 +577,7 @@ export class Scene {
 
     this._bgTexture = makeGradientTexture(theme.top, theme.bottom);
     this.scene.background = this._bgTexture;
+    applyThemeFog(this._fog, theme);
     if (theme.stars) {
       this._starfield = makeStarfield();
       this.scene.add(this._starfield);
