@@ -5,25 +5,33 @@ import {
   BOARD_TEXTURES,
   CAMERA_MAX_POLAR_ANGLE,
   CAPTURE_DELAY,
+  CAPTURE_DELAY_FRACTION,
   CAPTURE_DURATION,
   CAPTURE_SINK,
   CAPTURE_END_SCALE,
   CAPTURE_SINK_MARGIN,
   ENVIRONMENT_BLUR,
+  MOVE_DEFAULT,
+  MOVE_PROFILES,
+  MOVE_SETTLE_MS,
+  MOVE_DURATION_CLAMP,
   Scene,
   applyEnvironmentMap,
   applyThemeFog,
+  captureDelayFor,
   createBoardMaterials,
   createChessBoard,
   createEnvironment,
   createStoneMaterial,
   createStoneTable,
   applyRendererQuality,
+  moveDuration,
+  moveProfile,
   syncContactShadow,
 } from '../src/scene.js';
 import { DEFAULT_FOG_DENSITY, getTheme } from '../src/themes.js';
 import { isLightSquare, squareToWorld } from '../src/coords.js';
-import { CONTACT_SHADOW_Y } from '../src/pieces.js';
+import { CONTACT_SHADOW_Y, PIECE_TYPES } from '../src/pieces.js';
 import { MarkerLayer } from '../src/markers.js';
 
 describe('scene rendering helpers', () => {
@@ -602,6 +610,65 @@ describe('scene rendering helpers', () => {
     expect(scene.markers._slots.get('selected')).toHaveLength(0);
     expect(scene.markers._slots.get('targets')).toHaveLength(0);
   });
+
+  it('_resize forwards CSS pixel dimensions to the composer and still updates camera aspect', () => {
+    // EffectComposer.setSize multiplies whatever it receives by the pixel
+    // ratio captured at construction - passing device pixels here would
+    // double-apply that ratio, so this must see the same CSS w/h that
+    // renderer.setSize gets, not container.clientWidth * devicePixelRatio.
+    const scene = Object.create(Scene.prototype);
+    scene.container = { clientWidth: 800, clientHeight: 600 };
+    const rendererSizes = [];
+    scene.renderer = { setSize: (w, h) => rendererSizes.push([w, h]) };
+    let composerSize = null;
+    scene.post = { composer: { setSize: (w, h) => { composerSize = [w, h]; } } };
+    scene.camera = { aspect: 0, updateProjectionMatrix: () => {} };
+
+    scene._resize();
+
+    expect(rendererSizes).toEqual([[800, 600]]);
+    expect(composerSize).toEqual([800, 600]);
+    expect(scene.camera.aspect).toBeCloseTo(800 / 600, 5);
+  });
+
+  it('_resize is a no-op on the composer when post is null (the fallback path)', () => {
+    const scene = Object.create(Scene.prototype);
+    scene.container = { clientWidth: 400, clientHeight: 300 };
+    scene.renderer = { setSize: () => {} };
+    scene.post = null;
+    scene.camera = { aspect: 0, updateProjectionMatrix: () => {} };
+
+    expect(() => scene._resize()).not.toThrow();
+    expect(scene.camera.aspect).toBeCloseTo(400 / 300, 5);
+  });
+
+  it('_render renders through the composer when post is set, leaving renderer.render untouched', () => {
+    const scene = Object.create(Scene.prototype);
+    const rendererCalls = [];
+    scene.renderer = { render: (...args) => rendererCalls.push(args) };
+    scene.scene = { marker: 'scene' };
+    scene.camera = { marker: 'camera' };
+    let composerRenderCount = 0;
+    scene.post = { composer: { render: () => { composerRenderCount += 1; } } };
+
+    scene._render();
+
+    expect(composerRenderCount).toBe(1);
+    expect(rendererCalls).toHaveLength(0);
+  });
+
+  it('_render falls back to renderer.render(scene, camera) when post is null', () => {
+    const scene = Object.create(Scene.prototype);
+    const rendererCalls = [];
+    scene.renderer = { render: (...args) => rendererCalls.push(args) };
+    scene.scene = { marker: 'scene' };
+    scene.camera = { marker: 'camera' };
+    scene.post = null;
+
+    scene._render();
+
+    expect(rendererCalls).toEqual([[scene.scene, scene.camera]]);
+  });
 });
 
 describe('capture animation', () => {
@@ -892,4 +959,228 @@ describe('capture animation', () => {
     expect(queue.length).toBe(0);
     return promise;
   }));
+});
+
+describe('move profiles and settle', () => {
+  // Same stubbed-rAF + stubbed-performance.now harness as the describes above.
+  function withFakeClock(run) {
+    const queue = [];
+    const originalRAF = globalThis.requestAnimationFrame;
+    const originalNow = performance.now;
+    let now = 1000;
+    globalThis.requestAnimationFrame = (cb) => { queue.push(cb); };
+    performance.now = () => now;
+    try {
+      return run({ queue, advance: (ms) => { now += ms; } });
+    } finally {
+      globalThis.requestAnimationFrame = originalRAF;
+      performance.now = originalNow;
+    }
+  }
+
+  function drainAll(queue, advance, steps = 80) {
+    for (let i = 0; i < steps && queue.length; i++) {
+      advance(10);
+      queue.shift()(performance.now());
+    }
+  }
+
+  // Minimal stand-in for a pieces.js createPiece() group, typed this time -
+  // real pieces always carry userData.type; only test stubs and the
+  // capture-animation describe above deliberately omit it.
+  function makeTypedPiece(square, type) {
+    const geometry = new THREE.BoxGeometry();
+    geometry.userData.pieceInstanceGeometry = true;
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial());
+    const shadowMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial());
+    const obj = new THREE.Group();
+    obj.add(mesh);
+    obj.add(shadowMesh);
+    obj.userData = { square, type, contactShadow: shadowMesh };
+    const { x, z } = squareToWorld(square);
+    obj.position.set(x, 0, z);
+    return obj;
+  }
+
+  function makeSceneStub() {
+    const scene = Object.create(Scene.prototype);
+    scene.pieces = new Map();
+    scene._dying = new Set();
+    scene._boardGen = 0;
+    scene.scene = { remove: () => {}, add: () => {} };
+    return scene;
+  }
+
+  it('MOVE_PROFILES has an entry for every PIECE_TYPES letter; knight lift is the max; king duration is the max; every settle is in [0, 0.08]', () => {
+    for (const type of PIECE_TYPES) expect(MOVE_PROFILES[type]).toBeDefined();
+
+    const lifts = PIECE_TYPES.map((type) => MOVE_PROFILES[type].lift);
+    expect(MOVE_PROFILES.n.lift).toBe(Math.max(...lifts));
+
+    const durations = PIECE_TYPES.map((type) => MOVE_PROFILES[type].duration);
+    expect(MOVE_PROFILES.k.duration).toBe(Math.max(...durations));
+
+    for (const type of PIECE_TYPES) {
+      expect(MOVE_PROFILES[type].settle).toBeGreaterThanOrEqual(0);
+      expect(MOVE_PROFILES[type].settle).toBeLessThanOrEqual(0.08);
+    }
+  });
+
+  it('moveDuration is monotone non-decreasing in distance and clamped at both ends', () => {
+    const [min, max] = MOVE_DURATION_CLAMP;
+    for (const type of [...PIECE_TYPES, undefined]) {
+      let previous = -Infinity;
+      for (const distance of [0, 0.5, 1, 2, 4, 7, 9.9, 50, 1000]) {
+        const duration = moveDuration(type, distance);
+        expect(duration).toBeGreaterThanOrEqual(previous);
+        expect(duration).toBeGreaterThanOrEqual(min);
+        expect(duration).toBeLessThanOrEqual(max);
+        previous = duration;
+      }
+    }
+    // The clamp must actually be reachable, not just a no-op ceiling — but only
+    // for real profiles. MOVE_DEFAULT deliberately has no distance term at all
+    // (it reproduces the flat pre-profile 280ms), so it never reaches the
+    // ceiling; that flatness is asserted separately below.
+    for (const type of PIECE_TYPES) {
+      expect(moveDuration(type, 1000)).toBe(max);
+    }
+    expect(moveDuration(undefined, 1000)).toBe(MOVE_DEFAULT.duration);
+    expect(moveDuration(undefined, 0)).toBe(MOVE_DEFAULT.duration);
+  });
+
+  it('moveProfile(undefined) === MOVE_DEFAULT, and MOVE_DEFAULT is the compatibility lock {280, 0.60, 0}', () => {
+    expect(moveProfile(undefined)).toBe(MOVE_DEFAULT);
+    expect(MOVE_DEFAULT).toEqual({ duration: 280, lift: 0.60, settle: 0 });
+  });
+
+  it('a typed knight move arcs higher than a typed rook at the same arc fraction, position.y never negative, scale.y stays within [0.94, 1]', () => {
+    // Each piece gets its own isolated fake-clock scope (withFakeClock stubs
+    // requestAnimationFrame/performance.now globally for the duration of the
+    // callback), sampling position.y/scale.y every frame at 10 evenly spaced
+    // fractions of ITS OWN duration - which is exactly "the same arc
+    // fraction" for pieces whose real durations differ.
+    function sampleArc(type, from, to) {
+      return withFakeClock(({ queue, advance }) => {
+        const scene = makeSceneStub();
+        const obj = makeTypedPiece(from, type);
+        scene.pieces.set(from, obj);
+        scene.movePiece(from, to);
+        const duration = moveDuration(type, 1);
+        const step = duration / 10;
+        const ys = [];
+        for (let i = 0; i <= 10 && queue.length; i++) {
+          advance(i === 0 ? 0 : step);
+          queue.shift()(performance.now());
+          expect(obj.position.y).toBeGreaterThanOrEqual(0);
+          expect(obj.scale.y).toBeGreaterThanOrEqual(0.94);
+          expect(obj.scale.y).toBeLessThanOrEqual(1);
+          ys.push(obj.position.y);
+        }
+        return ys;
+      });
+    }
+
+    const knightYs = sampleArc('n', 'g1', 'f3');
+    const rookYs = sampleArc('r', 'a1', 'a4');
+    const midIndex = Math.min(5, knightYs.length - 1, rookYs.length - 1);
+    expect(knightYs[midIndex]).toBeGreaterThan(rookYs[midIndex]);
+  });
+
+  it('terminal frame: position is exactly squareToWorld(to) with y === 0, scale is exactly (1,1,1)', () => withFakeClock(({ queue, advance }) => {
+    const scene = makeSceneStub();
+    const knight = makeTypedPiece('b1', 'n');
+    scene.pieces.set('b1', knight);
+
+    scene.movePiece('b1', 'c3');
+    drainAll(queue, advance);
+
+    const end = squareToWorld('c3');
+    expect(knight.position.x).toBe(end.x);
+    expect(knight.position.y).toBe(0);
+    expect(knight.position.z).toBe(end.z);
+    expect(knight.scale.x).toBe(1);
+    expect(knight.scale.y).toBe(1);
+    expect(knight.scale.z).toBe(1);
+  }));
+
+  it('supersede DURING the settle (not just mid-arc): scale is restored to exactly 1, the decal stays grounded, and the promise resolves', () => withFakeClock(({ queue, advance }) => {
+    const scene = makeSceneStub();
+    const knight = makeTypedPiece('b1', 'n');
+    scene.pieces.set('b1', knight);
+    const shadowMesh = knight.userData.contactShadow;
+
+    let settled = false;
+    scene.movePiece('b1', 'c3').then(() => { settled = true; });
+
+    const { duration, settle } = MOVE_PROFILES.n;
+    expect(settle).toBeGreaterThan(0);
+
+    // Drain past the arc, one settle half-step into the squash.
+    advance(duration + MOVE_SETTLE_MS / 2);
+    queue.shift()(performance.now());
+    expect(knight.scale.y).toBeLessThan(1); // mid-squash, proves settle is live
+    const staleSettleContinuation = queue.shift(); // its own re-queued settle frame
+
+    // A second move (e.g. castling's chained rook slide, or a New Game
+    // resync) supersedes the in-flight settle before it finishes.
+    scene.movePiece('c3', 'c4');
+    expect(queue.length).toBe(1); // the new move's own rAF
+
+    // Resuming the stale settle continuation must ground out immediately:
+    // reset scale to exactly 1 (not leave the piece squashed forever) and
+    // sync the decal, then resolve the FIRST move's promise.
+    staleSettleContinuation(performance.now() + 1);
+
+    expect(knight.scale.y).toBe(1);
+    knight.updateMatrixWorld(true);
+    const worldPos = new THREE.Vector3();
+    shadowMesh.getWorldPosition(worldPos);
+    expect(worldPos.y).toBeCloseTo(CONTACT_SHADOW_Y, 5);
+
+    // Drain the superseding move's own rAF too, so its promise settles.
+    drainAll(queue, advance);
+
+    return Promise.resolve().then(() => expect(settled).toBe(true));
+  }));
+
+  it('clearPieces() during a settle bails out and mutates nothing further', () => withFakeClock(({ queue, advance }) => {
+    const scene = makeSceneStub();
+    const knight = makeTypedPiece('b1', 'n');
+    scene.pieces.set('b1', knight);
+
+    let settled = false;
+    scene.movePiece('b1', 'c3').then(() => { settled = true; });
+
+    const { duration } = MOVE_PROFILES.n;
+    advance(duration + MOVE_SETTLE_MS / 2);
+    queue.shift()(performance.now());
+    const squashedScale = knight.scale.y;
+    expect(squashedScale).toBeLessThan(1);
+    expect(queue.length).toBe(1); // its own re-queued settle continuation
+
+    scene._boardGen++; // what clearPieces() does before tearing pieces down
+
+    const continuation = queue.shift();
+    continuation(performance.now() + 1);
+
+    expect(knight.scale.y).toBe(1);
+    expect(queue.length).toBe(0); // no further frame queued - nothing left to mutate
+
+    return Promise.resolve().then(() => expect(settled).toBe(true));
+  }));
+
+  it('captureDelayFor(MOVE_DEFAULT.duration) === CAPTURE_DELAY (the old "~40% into 280ms" prose, now an assertion)', () => {
+    expect(CAPTURE_DELAY_FRACTION).toBeCloseTo(CAPTURE_DELAY / MOVE_DEFAULT.duration, 10);
+    expect(captureDelayFor(MOVE_DEFAULT.duration)).toBe(CAPTURE_DELAY);
+  });
+
+  it('lockout budget: moveDuration(type, dist) + MOVE_SETTLE_MS never exceeds 520ms, for every type at every legal distance', () => {
+    const legalDistances = [1, Math.SQRT2, 2, 3, 4, 5, 6, 7, 7 * Math.SQRT2, Math.hypot(1, 2)];
+    for (const type of [...PIECE_TYPES, undefined]) {
+      for (const distance of legalDistances) {
+        expect(moveDuration(type, distance) + MOVE_SETTLE_MS).toBeLessThanOrEqual(520);
+      }
+    }
+  });
 });

@@ -9,6 +9,7 @@ import {
 } from './themes.js';
 import { CONTACT_SHADOW_Y, setPieceEnvironmentMap } from './pieces.js';
 import { MarkerLayer } from './markers.js';
+import { createPostProcessing } from './postfx.js';
 
 const LIGHT_SQ = 0xe8d6ae; // was 0xdac799 — the texture mean dropped ~0.88 -> ~0.74,
                             // so the colour comes up to hold the same on-screen value
@@ -292,6 +293,54 @@ export const CAPTURE_END_SCALE = 0.35;
 // slab at grazing camera angles (see CAPTURE_SINK above).
 export const CAPTURE_SINK_MARGIN = 0.06;
 
+// --- Move profiles: every piece used to share one flat 280ms/lift-0.6 arc.
+// Default = today's numbers EXACTLY, with settle 0. Every real piece carries
+// userData.type, so this branch is only reached by test stubs and by pieces
+// built through some other path — which is why it must stay byte-identical to
+// the pre-profile behaviour.
+export const MOVE_DEFAULT = { duration: 280, lift: 0.60, settle: 0 };
+export const MOVE_PROFILES = {
+  n: { duration: 380, lift: 1.15, settle: 0.055 }, // knights jump: high arc, slow
+  p: { duration: 260, lift: 0.22, settle: 0.020 },
+  b: { duration: 240, lift: 0.10, settle: 0.014 }, // sliders glide low and fast
+  r: { duration: 240, lift: 0.10, settle: 0.016 },
+  q: { duration: 260, lift: 0.12, settle: 0.018 },
+  k: { duration: 420, lift: 0.16, settle: 0.030 }, // deliberate
+};
+export const MOVE_SETTLE_MS = 90;
+export const MOVE_DURATION_CLAMP = [200, 430];
+const MS_PER_EXTRA_UNIT = 16;
+
+export function moveProfile(type) { return MOVE_PROFILES[type] ?? MOVE_DEFAULT; }
+
+// A rook crossing seven squares in the same 240ms as one reads as a teleport;
+// a fixed speed makes short moves crawl. Mostly-fixed duration with a mild
+// distance term, hard-clamped so the input lockout stays bounded (see the
+// lockout-budget test: moveDuration's max output plus MOVE_SETTLE_MS lands
+// exactly at the 520ms ceiling that clamp was chosen for).
+export function moveDuration(type, worldDistance = 1) {
+  const profile = moveProfile(type);
+  // MOVE_DEFAULT gets no distance term at all. It exists to reproduce the
+  // pre-profile behaviour byte-for-byte, and that was a flat 280ms for every
+  // distance — a stub with no userData.type moving two squares must still take
+  // exactly 280ms, or the fake-clock tests that hand-advance frames desync.
+  // This lives here rather than at each call site on purpose: it is a property
+  // of the default profile, not a convention every caller has to remember.
+  const distance = profile === MOVE_DEFAULT ? 1 : worldDistance;
+  const extra = MS_PER_EXTRA_UNIT * Math.max(0, distance - 1);
+  const [min, max] = MOVE_DURATION_CLAMP;
+  return Math.min(max, Math.max(min, profile.duration + extra));
+}
+
+// CAPTURE_DELAY used to be commented as "the attacker is ~40% into its 280ms
+// arc" - true back when every piece shared one duration. With per-type
+// durations that prose goes stale silently, so express the coupling in code
+// instead: derive the fraction once from the fixed point (MOVE_DEFAULT's own
+// 280ms), then scale it by whatever duration the actual attacker's move ends
+// up taking.
+export const CAPTURE_DELAY_FRACTION = CAPTURE_DELAY / MOVE_DEFAULT.duration; // 0.392857...
+export function captureDelayFor(attackerDuration) { return attackerDuration * CAPTURE_DELAY_FRACTION; }
+
 function disposePieceGeometries(object3d) {
   const disposed = new Set();
   object3d.traverse((child) => {
@@ -391,6 +440,11 @@ export class Scene {
     // reachable from this.pieces.
     this._boardGen = 0;
 
+    // antialias is dead weight once createPostProcessing succeeds below - MSAA
+    // resolves into renderTarget1 before UnrealBloomPass/OutputPass run, and the
+    // final blit through OutputPass is what actually reaches the screen - but it
+    // stays on because it's the ONLY antialiasing on the fallback path (post ===
+    // null), where render() draws straight to the default framebuffer.
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     applyRendererQuality(this.renderer);
@@ -446,6 +500,11 @@ export class Scene {
     this._pointer = new THREE.Vector2();
 
     this.markers = new MarkerLayer(this.scene);
+
+    // Returns null (falling back to renderer.render in _render below) when the
+    // GPU/context lacks what UnrealBloomPass's HDR target needs - the same
+    // fallback philosophy as _addEnvironment/_envFailed above.
+    this.post = createPostProcessing({ renderer: this.renderer, scene: this.scene, camera: this.camera });
 
     window.addEventListener('resize', () => this._resize());
     this._resize();
@@ -525,6 +584,9 @@ export class Scene {
     const w = this.container.clientWidth || window.innerWidth;
     const h = this.container.clientHeight || window.innerHeight;
     this.renderer.setSize(w, h);
+    // CSS pixels, like renderer.setSize above: EffectComposer.setSize multiplies
+    // whatever it's given by the pixel ratio it captured at construction.
+    this.post?.composer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
@@ -533,7 +595,15 @@ export class Scene {
     requestAnimationFrame(() => this._animate());
     this.controls.update();
     this.markers.update(performance.now());
-    this.renderer.render(this.scene, this.camera);
+    this._render();
+  }
+
+  // Seam extracted purely so the render choice is testable under node -
+  // _animate self-recurses through requestAnimationFrame and is otherwise
+  // unreachable in a vitest run.
+  _render() {
+    if (this.post) this.post.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   placePiece(square, object3d) {
@@ -579,20 +649,51 @@ export class Scene {
   // movePiece), then animate it sinking through the board plane. Returns a
   // promise that resolves once the piece is destroyed. A no-op square
   // resolves immediately without queuing a frame.
-  capturePiece(square) {
+  //
+  // `attackerFrom`/`attackerTo` let the caller (main.js) stay ignorant of
+  // piece types entirely: the delay before the victim reacts is derived from
+  // the ATTACKER's own move profile (a knight capturing takes longer to
+  // arrive than a bishop gliding in), not a flat constant. Reading the
+  // attacker via `this.pieces.get(attackerFrom)` is only valid because
+  // main.js calls capturePiece() before movePiece() on the same tick (see the
+  // ordering comment in main.js#onMove) - the attacker is still parked at
+  // attackerFrom when this runs. `attackerTo` defaults to `square` (the
+  // common case: the attacker lands where the victim stood) but en passant
+  // passes a distinct square, since the victim there isn't on the square the
+  // attacker moves to. With no attacker on record (or none supplied), fall
+  // back to the flat CAPTURE_DELAY.
+  capturePiece(square, { attackerFrom = null, attackerTo = square } = {}) {
     const obj = this.pieces.get(square);
     if (!obj) return Promise.resolve();
     this.pieces.delete(square);
     this._dying.add(obj);
-    return this._animateCapture(obj);
+
+    const attacker = attackerFrom ? this.pieces.get(attackerFrom) : null;
+    let delay = CAPTURE_DELAY;
+    if (attacker) {
+      const attackerType = attacker.userData?.type;
+      const attackerStart = squareToWorld(attackerFrom);
+      const attackerEnd = squareToWorld(attackerTo);
+      const attackerDistance = Math.hypot(
+        attackerEnd.x - attackerStart.x,
+        attackerEnd.z - attackerStart.z,
+      );
+      // moveDuration itself drops the distance term for MOVE_DEFAULT, so an
+      // attacker with no recorded type yields captureDelayFor(280) ===
+      // CAPTURE_DELAY exactly - the fallback the capture-animation tests rely on.
+      const attackerDuration = moveDuration(attackerType, attackerDistance);
+      delay = captureDelayFor(attackerDuration);
+    }
+    return this._animateCapture(obj, delay);
   }
 
   // Sink-and-shrink, not a fade: see CAPTURE_SINK/CAPTURE_END_SCALE above for
   // why a fade was rejected. Mutates only this object's own transform (y and
   // scale) plus its contact-shadow child's local y via syncContactShadow -
   // zero material work, so there is nothing to dispose beyond the geometry
-  // _destroyPiece already frees.
-  _animateCapture(obj) {
+  // _destroyPiece already frees. `delay` is how long the victim hangs before
+  // reacting - see capturePiece above for how it's derived.
+  _animateCapture(obj, delay) {
     const myGen = this._boardGen;
     const startY = obj.position.y;
     const t0 = performance.now();
@@ -614,13 +715,13 @@ export class Scene {
           return;
         }
         const elapsed = now - t0;
-        if (elapsed < CAPTURE_DELAY) {
+        if (elapsed < delay) {
           // Hang while the attacker is still closing the distance - the
           // victim doesn't react until it's actually struck.
           requestAnimationFrame(step);
           return;
         }
-        const t = Math.min(1, (elapsed - CAPTURE_DELAY) / CAPTURE_DURATION);
+        const t = Math.min(1, (elapsed - delay) / CAPTURE_DURATION);
         const ease = t * t; // ease-in: slow start, then drops
         obj.position.y = startY - sink * ease;
         const scale = 1 - (1 - CAPTURE_END_SCALE) * ease;
@@ -642,6 +743,14 @@ export class Scene {
   // resolves when the slide completes. Updates the internal square map.
   // A generation stamp makes a newer move on the same piece supersede an
   // in-flight one (the older animation resolves early instead of fighting it).
+  //
+  // Per-type feel comes from moveProfile(obj.userData.type) (see the MOVE_*
+  // block above): knights arc high and slow (they jump), sliders (b/r/q)
+  // glide low and fast, the king moves with deliberate weight, and every
+  // profile but the default settles with a brief landing squash. A piece
+  // built through some path other than pieces.js#createPiece (or a test
+  // stub) carries no userData.type, so moveProfile falls back to
+  // MOVE_DEFAULT - today's original numbers, byte-identical, with settle 0.
   movePiece(from, to) {
     const obj = this.pieces.get(from);
     if (!obj) return Promise.resolve();
@@ -658,33 +767,84 @@ export class Scene {
     const myBoardGen = this._boardGen;
     const start = obj.position.clone();
     const end = squareToWorld(to);
-    const lift = 0.6;
-    const duration = 280; // ms
+    const type = obj.userData.type;
+    const profile = moveProfile(type);
+    const { lift, settle } = profile;
+    const worldDistance = Math.hypot(end.x - start.x, end.z - start.z);
+    // Only a real MOVE_PROFILES entry earns the distance-based speed-up/slow-down;
+    // moveDuration drops the distance term for MOVE_DEFAULT itself.
+    const duration = moveDuration(type, worldDistance); // ms
     const t0 = performance.now();
     return new Promise((resolve) => {
       const step = (now) => {
         if (obj.userData._moveGen !== myGen || this._boardGen !== myBoardGen) {
-          // Superseded mid-arc, or the board was cleared out from under us:
-          // without the syncContactShadow call here for the supersede case,
-          // the decal is left permanently offset by whatever the lift was at
-          // the moment of supersession - a blob floating in mid-air.
-          // Reachable via chained movePiece calls (castling) and a New Game
-          // that resyncs the board mid-animation.
+          // Superseded mid-arc or mid-settle, or the board was cleared out
+          // from under us. Reset scale FIRST, then syncContactShadow (order
+          // matters - it divides by scale.y): a settle squash superseded
+          // partway through would otherwise leave the piece permanently
+          // deformed, since nothing else ever undoes it. Without the
+          // syncContactShadow call here, the decal is also left permanently
+          // offset by whatever the lift was at the moment of supersession -
+          // a blob floating in mid-air. Reachable via chained movePiece
+          // calls (castling) and a New Game that resyncs the board
+          // mid-animation.
+          obj.scale.set(1, 1, 1);
           syncContactShadow(obj);
           resolve();
           return;
         }
-        const t = Math.min(1, (now - t0) / duration);
-        const ease = t * t * (3 - 2 * t); // smoothstep
-        obj.position.x = start.x + (end.x - start.x) * ease;
-        obj.position.z = start.z + (end.z - start.z) * ease;
-        obj.position.y = Math.sin(t * Math.PI) * lift; // arc hop
+        const elapsed = now - t0;
+        if (elapsed < duration) {
+          const t = elapsed / duration;
+          const ease = t * t * (3 - 2 * t); // smoothstep
+          obj.position.x = start.x + (end.x - start.x) * ease;
+          obj.position.z = start.z + (end.z - start.z) * ease;
+          obj.position.y = Math.sin(t * Math.PI) * lift; // arc hop
+          syncContactShadow(obj);
+          requestAnimationFrame(step);
+          return;
+        }
+        // Arc complete: position is pinned exactly and stays there - only
+        // `scale` moves from here on. A squash (never a negative y) is the
+        // only safe way to sell a landing: a y overshoot would dip the
+        // piece's flat base into the opaque board (and, if superseded
+        // mid-dip, leave it buried there), and an XZ overshoot would leave
+        // it off-centre if superseded. A scale squash costs neither, because
+        // syncContactShadow already divides by scale.y (see above) - the
+        // decal stays welded for free, the same path the capture shrink
+        // already exercises.
+        obj.position.set(end.x, 0, end.z);
+        const settleElapsed = elapsed - duration;
+        if (settle > 0 && settleElapsed < MOVE_SETTLE_MS) {
+          const s = settleElapsed / MOVE_SETTLE_MS;
+          const squash = Math.sin(s * Math.PI) * settle; // 0 at both ends
+          obj.scale.set(1 + squash * 0.5, 1 - squash, 1 + squash * 0.5);
+          syncContactShadow(obj);
+          requestAnimationFrame(step);
+          return;
+        }
+        // Finish at exactly 1, not sin(PI) (~1.2e-16) - see above.
+        obj.scale.set(1, 1, 1);
         syncContactShadow(obj);
-        if (t < 1) requestAnimationFrame(step);
-        else { obj.position.set(end.x, 0, end.z); syncContactShadow(obj); resolve(); }
+        resolve();
       };
       requestAnimationFrame(step);
     });
+  }
+
+  // Public so main.js can compute the castling stagger (see onMove) without
+  // duplicating movePiece's own profile/distance logic. Must be called
+  // before movePiece(from, to) empties `from`'s slot in `this.pieces` -
+  // afterward there is nothing left here to read the type from, and this
+  // falls back to squareToWorld(from) for the distance (a stationary piece,
+  // not one already mid-animation).
+  moveDurationFor(from, to) {
+    const obj = this.pieces.get(from);
+    const type = obj?.userData?.type;
+    const start = obj ? obj.position : squareToWorld(from);
+    const end = squareToWorld(to);
+    const worldDistance = Math.hypot(end.x - start.x, end.z - start.z);
+    return moveDuration(type, worldDistance);
   }
 
   // Named for what Input actually means: `square` is the piece the player

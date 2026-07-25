@@ -66,12 +66,39 @@ async function onMove(change) {
     // scene.pieces synchronously, which is what stops movePiece's
     // pieces.set(to, obj) from clobbering the victim's map entry. The two then
     // animate concurrently — the victim sinks as the attacker arrives instead of
-    // popping out before it sets off.
-    const capture = change.captured ? scene.capturePiece(change.captured.square) : null;
-    await Promise.all([scene.movePiece(change.from, change.to), capture]);
+    // popping out before it sets off. attackerFrom/attackerTo let scene.js derive
+    // the victim's reaction delay from the attacker's own move profile instead of
+    // main.js ever having to know piece types.
+    const capture = change.captured
+      ? scene.capturePiece(change.captured.square, { attackerFrom: change.from, attackerTo: change.to })
+      : null;
+
+    // Castling: fire the rook's slide partway through the king's, rather than
+    // fully serial (king 420ms+settle then rook 240ms+settle would run
+    // movePending for ~840ms with the new per-type durations - a real feel
+    // regression over today's ~560ms) or fully concurrent (their paths cross
+    // near the f/g file while the king is still mid-arc). moveDurationFor must
+    // be read before scene.movePiece(change.from, change.to) below empties the
+    // king's slot. 55% is comfortably past the crossing point for both
+    // kingside and queenside castling, so the two pieces never visually collide.
+    let rookMove = null;
+    if (change.castle) {
+      const kingDuration = scene.moveDurationFor(change.from, change.to);
+      rookMove = new Promise((resolve) => {
+        setTimeout(() => {
+          // A New Game landing mid-stagger would otherwise slide whatever
+          // piece the resynced board placed on rookFrom (e.g. the fresh
+          // game's own rook) - bail out the same way the code below already
+          // does for the king/capture pair.
+          if (myGame !== gameId) { resolve(); return; }
+          resolve(scene.movePiece(change.castle.rookFrom, change.castle.rookTo));
+        }, kingDuration * 0.55);
+      });
+    }
+
+    await Promise.all([scene.movePiece(change.from, change.to), capture, rookMove]);
     if (myGame !== gameId) return; // a New Game landed while we were animating
 
-    if (change.castle) await scene.movePiece(change.castle.rookFrom, change.castle.rookTo);
     if (change.promotion) {
       scene.removePieceAt(change.to);
       scene.placePiece(change.to, createPiece(change.promotion, change.piece.color));
