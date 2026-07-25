@@ -29,6 +29,13 @@ let pieceSetLoadId = 0; // bumped on each requested piece-set load; stale replie
 let appliedPieceSetKey = null;
 let lastMove = null;    // {from,to} of the most recent move, so a board rebuild
                         // (piece-set switch) can re-apply the highlight
+// True for the entire span of an onMove call, including its move/capture
+// animation await. aiBusy alone can't guard onPieceSetChange's re-enable: it
+// only covers the engine's think time and is cleared (in triggerAI) BEFORE
+// game.makeMove fires onMove, so it's false for the ~230-340ms the move/
+// capture animation is actually playing - the exact window a piece-set
+// switch could otherwise land in and re-enable input mid-animation.
+let movePending = false;
 
 // --- board sync ---------------------------------------------------------------
 function syncBoardFromGame() {
@@ -48,32 +55,40 @@ function syncBoardFromGame() {
 // --- reflect a move change-set on the board -----------------------------------
 async function onMove(change) {
   const myGame = gameId;
-  input.disable();
-  lastMove = { from: change.from, to: change.to };
-  scene.setLastMove(change.from, change.to);
-  scene.setCheck(null); // the previous glow is stale the instant a move lands
+  movePending = true;
+  try {
+    input.disable();
+    lastMove = { from: change.from, to: change.to };
+    scene.setLastMove(change.from, change.to);
+    scene.setCheck(null); // the previous glow is stale the instant a move lands
 
-  // capturePiece MUST be called before movePiece: it detaches the victim from
-  // scene.pieces synchronously, which is what stops movePiece's
-  // pieces.set(to, obj) from clobbering the victim's map entry. The two then
-  // animate concurrently — the victim sinks as the attacker arrives instead of
-  // popping out before it sets off.
-  const capture = change.captured ? scene.capturePiece(change.captured.square) : null;
-  await Promise.all([scene.movePiece(change.from, change.to), capture]);
-  if (myGame !== gameId) return; // a New Game landed while we were animating
+    // capturePiece MUST be called before movePiece: it detaches the victim from
+    // scene.pieces synchronously, which is what stops movePiece's
+    // pieces.set(to, obj) from clobbering the victim's map entry. The two then
+    // animate concurrently — the victim sinks as the attacker arrives instead of
+    // popping out before it sets off.
+    const capture = change.captured ? scene.capturePiece(change.captured.square) : null;
+    await Promise.all([scene.movePiece(change.from, change.to), capture]);
+    if (myGame !== gameId) return; // a New Game landed while we were animating
 
-  if (change.castle) await scene.movePiece(change.castle.rookFrom, change.castle.rookTo);
-  if (change.promotion) {
-    scene.removePieceAt(change.to);
-    scene.placePiece(change.to, createPiece(change.promotion, change.piece.color));
+    if (change.castle) await scene.movePiece(change.castle.rookFrom, change.castle.rookTo);
+    if (change.promotion) {
+      scene.removePieceAt(change.to);
+      scene.placePiece(change.to, createPiece(change.promotion, change.piece.color));
+    }
+    if (myGame !== gameId) return;
+
+    scene.setCheck(game.isCheck() ? game.kingSquare(game.turn()) : null);
+    ui.setStatus(statusText(game));
+    if (game.isGameOver()) return;
+    if (game.turn() === aiColor) triggerAI();
+    else input.enable();
+  } finally {
+    // Runs after every early return above too (New Game mid-animation, game
+    // over), so onPieceSetChange's guard never stays stuck on a move that's
+    // actually finished.
+    movePending = false;
   }
-  if (myGame !== gameId) return;
-
-  scene.setCheck(game.isCheck() ? game.kingSquare(game.turn()) : null);
-  ui.setStatus(statusText(game));
-  if (game.isGameOver()) return;
-  if (game.turn() === aiColor) triggerAI();
-  else input.enable();
 }
 
 game.on('move', onMove);
@@ -146,7 +161,8 @@ async function onPieceSetChange(key) {
     ui.setPieceSet(previousKey);
     ui.setStatus(`Failed to load pieces - ${err.message}`);
   } finally {
-    if (loadId === pieceSetLoadId && !game.isGameOver() && game.turn() !== aiColor && !aiBusy) {
+    if (loadId === pieceSetLoadId && !game.isGameOver() && game.turn() !== aiColor
+      && !aiBusy && !movePending) {
       input.enable();
     }
   }

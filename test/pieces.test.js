@@ -12,6 +12,7 @@ import {
   unwrapSeamTriangles,
   GRAIN_ARC_SCALE,
   GRAIN_HEIGHT_SCALE,
+  TARGET_KING_HEIGHT,
 } from '../src/pieces.js';
 
 function fakeTemplate(height = 1) {
@@ -208,6 +209,32 @@ describe('pieces', () => {
     expect(kingHeight).toBeCloseTo(1.4, 5); // TARGET_KING_HEIGHT
     expect(uvSpanY(firstMesh(pawn).geometry)).toBeCloseTo(pawnHeight / GRAIN_HEIGHT_SCALE, 4);
     expect(uvSpanY(firstMesh(king).geometry)).toBeCloseTo(kingHeight / GRAIN_HEIGHT_SCALE, 4);
+  });
+
+  it('never lets a normalized template exceed the king\'s own target height', async () => {
+    // loadPieces derives ONE uniform scale from the king's raw height and
+    // applies it to every type (see TARGET_KING_HEIGHT / normalizeModel), so
+    // this only holds if the king's raw model is the tallest in the set -
+    // nothing asserts that at the source. This test makes normalizeModel's
+    // contract explicit for a representative set (every other type's raw
+    // height at or below the king's, as both shipped sets are), so a future
+    // asset regression (e.g. a queen model taller than the king) is caught
+    // here rather than surfacing as a piece poking through the board mid-
+    // capture (see src/scene.js's CAPTURE_SINK derivation, which no longer
+    // strictly depends on this holding, but should never need to rely on its
+    // fallback for the shipped sets).
+    const rawHeights = { p: 0.5, n: 0.7, b: 0.8, r: 0.9, q: 0.95, k: 1.0 };
+    const loader = { async loadAsync(url) {
+      const type = Object.keys(PIECE_SETS.default.files)
+        .find((t) => url.endsWith(`${PIECE_SETS.default.files[t]}.glb`));
+      return { scene: fakeTemplate(rawHeights[type] ?? 1) };
+    } };
+
+    await loadPieces({ set: 'default', baseUrl: '/', loader });
+
+    for (const type of PIECE_TYPES) {
+      expect(height(createPiece(type, 'w'))).toBeLessThanOrEqual(TARGET_KING_HEIGHT + 1e-9);
+    }
   });
 
   it('does not bake UVs into a shared template geometry', () => {

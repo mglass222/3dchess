@@ -264,16 +264,33 @@ export function createStoneTable() {
 
 export const CAPTURE_DELAY = 110;      // ms — the attacker is ~40% into its 280ms arc
 export const CAPTURE_DURATION = 230;   // ms
-// These two are a PAIR: CAPTURE_SINK (0.55) > TARGET_KING_HEIGHT (1.4) *
-// CAPTURE_END_SCALE (0.35) = 0.49, so even the tallest piece on the board is
-// fully below y=0 by the time the animation ends, and the opaque board
-// (BoxGeometry(1, 0.18, 1), top face at y=0 — see createChessBoard) clips it
-// for free. No transparent material, no shader recompile, no dispose
-// obligation. Don't raise one without the other: sinking further without
-// shrinking to match would poke the piece out beneath the table slab at
-// grazing camera angles.
-const CAPTURE_SINK = 0.55;             // world units below the board top
-const CAPTURE_END_SCALE = 0.35;
+// CAPTURE_SINK is a FLOOR, not a bound derived from "the king is the tallest
+// piece" — that assumption doesn't hold in general (loadPieces derives ONE
+// uniform scale from the king's height and applies it to every type, so it
+// only holds if the king's raw model happens to be the tallest in the set;
+// nothing enforces that). Instead, _animateCapture below computes a per-piece
+// sink from the captured piece's OWN recorded height (obj.userData.height,
+// set once in pieces.js#createPiece from the same Box3 addContactShadow
+// already computes to size the contact-shadow decal — reused rather than
+// measured again, since the Downloaded set is a single 48MB GLB with ~300k
+// vertices per piece and a second per-capture Box3 traversal would be a
+// visible hitch): Math.max(CAPTURE_SINK, height * CAPTURE_END_SCALE +
+// CAPTURE_SINK_MARGIN). CAPTURE_SINK remains the floor for any piece no
+// taller than the king, and the fallback for a piece created by some other
+// path that never got a recorded height. The opaque board (BoxGeometry(1,
+// 0.18, 1), top face at y=0 — see createChessBoard) clips the piece for free
+// once it's below y=0. No transparent material, no shader recompile, no
+// dispose obligation.
+// Exported so tests can compute expected clearances directly instead of
+// duplicating these numbers.
+export const CAPTURE_SINK = 0.55;      // world units below the board top; also the floor
+export const CAPTURE_END_SCALE = 0.35;
+// Extra clearance added on top of the scaled height so the piece's topmost
+// vertex lands strictly below y=0, not grazing it. Margin, not a bound: don't
+// raise CAPTURE_END_SCALE or lower this without re-checking that the sink
+// still clears the board and doesn't poke the piece out beneath the table
+// slab at grazing camera angles (see CAPTURE_SINK above).
+export const CAPTURE_SINK_MARGIN = 0.06;
 
 function disposePieceGeometries(object3d) {
   const disposed = new Set();
@@ -579,6 +596,15 @@ export class Scene {
     const myGen = this._boardGen;
     const startY = obj.position.y;
     const t0 = performance.now();
+    // See CAPTURE_SINK's comment above: derive this piece's own clearance
+    // rather than trust the shared constant to already cover it. Falls back
+    // to CAPTURE_SINK when userData.height is missing (e.g. a piece built by
+    // some other path than pieces.js#createPiece), so it still animates
+    // sanely rather than throwing or sinking by NaN.
+    const height = obj.userData?.height;
+    const sink = Number.isFinite(height)
+      ? Math.max(CAPTURE_SINK, height * CAPTURE_END_SCALE + CAPTURE_SINK_MARGIN)
+      : CAPTURE_SINK;
     return new Promise((resolve) => {
       const step = (now) => {
         if (this._boardGen !== myGen) {
@@ -596,7 +622,7 @@ export class Scene {
         }
         const t = Math.min(1, (elapsed - CAPTURE_DELAY) / CAPTURE_DURATION);
         const ease = t * t; // ease-in: slow start, then drops
-        obj.position.y = startY - CAPTURE_SINK * ease;
+        obj.position.y = startY - sink * ease;
         const scale = 1 - (1 - CAPTURE_END_SCALE) * ease;
         obj.scale.setScalar(scale);
         syncContactShadow(obj);

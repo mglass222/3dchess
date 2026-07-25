@@ -296,12 +296,23 @@ function measureBaseDiameter(group, box) {
 // solid disc, producing a hard black ring under every piece. The decal is
 // radially symmetric, so per-piece rotation (e.g. the knight's rotation.y)
 // needs no compensation.
+// Returns { shadow, height }: `height` is the piece's own world-space height
+// (box already computed to size the decal - see the comment below - reused
+// rather than measured a second time). scene.js's capture animation reads it
+// off obj.userData to size how far a piece needs to sink to clear the board,
+// instead of assuming every piece is no taller than the king (see
+// CAPTURE_SINK in scene.js for why that assumption doesn't hold in general).
 function addContactShadow(group) {
   // Box3.setFromObject updates the whole hierarchy's matrixWorld, which
   // measureBaseDiameter below relies on to read vertices in group-local space.
+  // Also the one and only bounding-box pass for this piece - the Downloaded
+  // set is a single 48MB GLB with ~300k vertices per piece, so a second
+  // traversal (e.g. to separately measure height for the capture animation)
+  // would be a visible hitch. Reuse this box for both.
   const box = new THREE.Box3().setFromObject(group);
   const baseDiameter = measureBaseDiameter(group, box);
   const diameter = Math.min(baseDiameter * CONTACT_SHADOW_SPREAD, CONTACT_SHADOW_MAX);
+  const height = box.max.y - box.min.y;
 
   const shadow = new THREE.Mesh(CONTACT_SHADOW_GEOMETRY, CONTACT_SHADOW_MATERIAL);
   shadow.name = 'contact-shadow';
@@ -319,7 +330,7 @@ function addContactShadow(group) {
   shadow.raycast = () => {};
 
   group.add(shadow);
-  return shadow;
+  return { shadow, height };
 }
 
 // Sets the flag scene.js's disposePieceGeometries reads to decide which geometries
@@ -443,7 +454,7 @@ const templates = {};
 let activePieceSet = PIECE_SETS[DEFAULT_PIECE_SET];
 let loadPiecesId = 0;
 
-const TARGET_KING_HEIGHT = 1.4; // world units (1 = one square); relative sizes preserved
+export const TARGET_KING_HEIGHT = 1.4; // world units (1 = one square); relative sizes preserved
 
 function assetUrl(baseUrl, path) {
   const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
@@ -569,7 +580,7 @@ export function createPiece(type, color) {
   // Added after the traverse above (ordering is load-bearing - see
   // addContactShadow) and outside it, so the decal gets neither the piece
   // material/UVs nor a castShadow flag.
-  const contactShadow = addContactShadow(obj);
-  obj.userData = { type, color, contactShadow };
+  const { shadow: contactShadow, height } = addContactShadow(obj);
+  obj.userData = { type, color, contactShadow, height };
   return obj;
 }

@@ -6,6 +6,9 @@ import {
   CAMERA_MAX_POLAR_ANGLE,
   CAPTURE_DELAY,
   CAPTURE_DURATION,
+  CAPTURE_SINK,
+  CAPTURE_END_SCALE,
+  CAPTURE_SINK_MARGIN,
   ENVIRONMENT_BLUR,
   Scene,
   applyEnvironmentMap,
@@ -634,7 +637,7 @@ describe('capture animation', () => {
   // with owned (pieceInstanceGeometry-flagged) geometry, plus a contact-shadow
   // child wired up the same way createPiece/addContactShadow wire it, so
   // syncContactShadow has something to act on.
-  function makePiece(square, { onGeometryDispose, material } = {}) {
+  function makePiece(square, { onGeometryDispose, material, height } = {}) {
     const geometry = new THREE.BoxGeometry();
     geometry.userData.pieceInstanceGeometry = true;
     if (onGeometryDispose) geometry.addEventListener('dispose', onGeometryDispose);
@@ -644,6 +647,10 @@ describe('capture animation', () => {
     obj.add(mesh);
     obj.add(shadowMesh);
     obj.userData = { square, contactShadow: shadowMesh };
+    // Only set when the caller passes one, so a test can exercise the
+    // fallback path (userData.height missing) exactly like a piece built by
+    // some path other than pieces.js#createPiece.
+    if (height !== undefined) obj.userData.height = height;
     const { x, z } = squareToWorld(square);
     obj.position.set(x, 0, z);
     return { obj, mesh, shadowMesh, geometry };
@@ -833,6 +840,50 @@ describe('capture animation', () => {
     expect(victimMesh.material.transparent).toBe(false);
     expect(victimMesh.material.opacity).toBe(1);
     expect(materialDisposed).toBe(false);
+  }));
+
+  it('derives the sink from the piece\'s own recorded height, clearing a piece taller than the king', () => withFakeClock(({ queue, advance }) => {
+    // 2.5 world units is deliberately far taller than TARGET_KING_HEIGHT
+    // (1.4) — the exact "queen taller than king" scenario the fixed
+    // CAPTURE_SINK constant assumed could never happen. Prove the OLD fixed
+    // constant would have failed this piece first, so the assertion below
+    // isn't vacuously true for any sink value.
+    const height = 2.5;
+    const scaledHeight = height * CAPTURE_END_SCALE;
+    expect(CAPTURE_SINK).toBeLessThan(scaledHeight); // old constant: piece would poke above y=0
+
+    const { scene } = makeSceneStub();
+    const { obj: victim } = makePiece('d5', { height });
+    scene.pieces.set('d5', victim);
+
+    scene.capturePiece('d5');
+    drainAll(queue, advance);
+
+    // Final frame: ease = 1, so scale.y is exactly CAPTURE_END_SCALE and
+    // position.y is startY - (derived sink).
+    expect(victim.scale.y).toBeCloseTo(CAPTURE_END_SCALE, 5);
+    const derivedSink = Math.max(CAPTURE_SINK, scaledHeight + CAPTURE_SINK_MARGIN);
+    expect(victim.position.y).toBeCloseTo(-derivedSink, 5);
+
+    // The piece's own scaled top must land strictly below the board (y=0),
+    // not just "lower than before".
+    const top = victim.position.y + scaledHeight;
+    expect(top).toBeLessThan(0);
+  }));
+
+  it('falls back to the fixed CAPTURE_SINK when the piece carries no recorded height', () => withFakeClock(({ queue, advance }) => {
+    const { scene } = makeSceneStub();
+    // No `height` option: mirrors a piece built by some path other than
+    // pieces.js#createPiece, which never set userData.height.
+    const { obj: victim } = makePiece('d5');
+    expect(victim.userData.height).toBeUndefined();
+    scene.pieces.set('d5', victim);
+
+    scene.capturePiece('d5');
+    drainAll(queue, advance);
+
+    expect(victim.scale.y).toBeCloseTo(CAPTURE_END_SCALE, 5);
+    expect(victim.position.y).toBeCloseTo(-CAPTURE_SINK, 5);
   }));
 
   it('capturePiece on an empty square resolves immediately without queuing a frame', () => withFakeClock(({ queue }) => {
