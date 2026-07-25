@@ -4,6 +4,8 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import {
   BOARD_TEXTURES,
   CAMERA_MAX_POLAR_ANGLE,
+  CAPTURE_DELAY,
+  CAPTURE_DURATION,
   ENVIRONMENT_BLUR,
   Scene,
   applyEnvironmentMap,
@@ -19,6 +21,7 @@ import {
 import { DEFAULT_FOG_DENSITY, getTheme } from '../src/themes.js';
 import { isLightSquare, squareToWorld } from '../src/coords.js';
 import { CONTACT_SHADOW_Y } from '../src/pieces.js';
+import { MarkerLayer } from '../src/markers.js';
 
 describe('scene rendering helpers', () => {
   it('clamps camera rotation above board level', () => {
@@ -458,6 +461,25 @@ describe('scene rendering helpers', () => {
     expect(worldPos.z).toBeCloseTo(-2, 5);
   });
 
+  it('syncContactShadow keeps the decal grounded when the parent group is scaled (capture shrink)', () => {
+    const parent = new THREE.Group();
+    parent.position.set(1, 0.6, -2); // mid-hop
+    parent.scale.setScalar(0.5);
+    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial());
+    parent.add(shadow);
+    parent.userData.contactShadow = shadow;
+
+    syncContactShadow(parent);
+    parent.updateMatrixWorld(true);
+
+    const worldPos = new THREE.Vector3();
+    shadow.getWorldPosition(worldPos);
+
+    expect(worldPos.y).toBeCloseTo(CONTACT_SHADOW_Y, 5);
+    expect(worldPos.x).toBeCloseTo(1, 5);
+    expect(worldPos.z).toBeCloseTo(-2, 5);
+  });
+
   it('is a no-op when the object carries no contact shadow', () => {
     const obj = new THREE.Group();
     obj.position.set(0, 0.5, 0);
@@ -545,4 +567,278 @@ describe('scene rendering helpers', () => {
       performance.now = originalNow;
     }
   });
+
+  it('setSelection normalizes bare target strings to move markers and marks the square selected', () => {
+    const scene = Object.create(Scene.prototype);
+    scene.markers = new MarkerLayer(new THREE.Group());
+
+    scene.setSelection('e2', ['e3', 'e4']);
+
+    const selected = scene.markers._slots.get('selected');
+    expect(selected).toHaveLength(1);
+    expect(selected[0].userData.markerKind).toBe('selected');
+    const e2 = squareToWorld('e2');
+    expect(selected[0].position.x).toBeCloseTo(e2.x, 5);
+    expect(selected[0].position.z).toBeCloseTo(e2.z, 5);
+
+    const targets = scene.markers._slots.get('targets');
+    expect(targets.map((m) => m.userData.markerKind)).toEqual(['move', 'move']);
+  });
+
+  it('setLastMove markers survive a clearSelection (same slot-independence invariant, at the public Scene API)', () => {
+    const scene = Object.create(Scene.prototype);
+    scene.markers = new MarkerLayer(new THREE.Group());
+
+    scene.setLastMove('e2', 'e4');
+    scene.setSelection('d2', ['d3', 'd4']);
+    scene.clearSelection();
+
+    const lastMove = scene.markers._slots.get('lastMove');
+    expect(lastMove).toHaveLength(2);
+    expect(lastMove.every((m) => m.parent === scene.markers.group)).toBe(true);
+    expect(scene.markers._slots.get('selected')).toHaveLength(0);
+    expect(scene.markers._slots.get('targets')).toHaveLength(0);
+  });
+});
+
+describe('capture animation', () => {
+  // Stubs requestAnimationFrame (into `queue`, so tests control exactly when
+  // each frame runs) and performance.now (into a manually-advanced clock),
+  // matching the harness the movePiece tests above already use.
+  function withFakeClock(run) {
+    const queue = [];
+    const originalRAF = globalThis.requestAnimationFrame;
+    const originalNow = performance.now;
+    let now = 1000;
+    globalThis.requestAnimationFrame = (cb) => { queue.push(cb); };
+    performance.now = () => now;
+    try {
+      return run({ queue, advance: (ms) => { now += ms; } });
+    } finally {
+      globalThis.requestAnimationFrame = originalRAF;
+      performance.now = originalNow;
+    }
+  }
+
+  // Runs every currently-queued (and re-queued) rAF callback to completion,
+  // advancing the fake clock 50ms per step. 60 steps * 50ms = 3000ms, well
+  // past both CAPTURE_DELAY + CAPTURE_DURATION (340ms) and movePiece's 280ms.
+  function drainAll(queue, advance) {
+    for (let i = 0; i < 60 && queue.length; i++) {
+      advance(50);
+      queue.shift()(performance.now());
+    }
+  }
+
+  // Builds a minimal stand-in for a pieces.js createPiece() group: one mesh
+  // with owned (pieceInstanceGeometry-flagged) geometry, plus a contact-shadow
+  // child wired up the same way createPiece/addContactShadow wire it, so
+  // syncContactShadow has something to act on.
+  function makePiece(square, { onGeometryDispose, material } = {}) {
+    const geometry = new THREE.BoxGeometry();
+    geometry.userData.pieceInstanceGeometry = true;
+    if (onGeometryDispose) geometry.addEventListener('dispose', onGeometryDispose);
+    const mesh = new THREE.Mesh(geometry, material ?? new THREE.MeshStandardMaterial());
+    const shadowMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial());
+    const obj = new THREE.Group();
+    obj.add(mesh);
+    obj.add(shadowMesh);
+    obj.userData = { square, contactShadow: shadowMesh };
+    const { x, z } = squareToWorld(square);
+    obj.position.set(x, 0, z);
+    return { obj, mesh, shadowMesh, geometry };
+  }
+
+  function makeSceneStub() {
+    const removed = [];
+    const added = [];
+    const scene = Object.create(Scene.prototype);
+    scene.pieces = new Map();
+    scene._dying = new Set();
+    scene._boardGen = 0;
+    scene.scene = {
+      remove: (obj) => removed.push(obj),
+      add: (obj) => added.push(obj),
+    };
+    return { scene, removed, added };
+  }
+
+  it('detaches the victim synchronously so a same-tick movePiece cannot clobber it (the clobber test)', () => withFakeClock(({ queue, advance }) => {
+    const { scene } = makeSceneStub();
+    let victimDisposeCount = 0;
+    const { obj: victim } = makePiece('d5', { onGeometryDispose: () => { victimDisposeCount += 1; } });
+    const { obj: attacker } = makePiece('e4');
+    scene.pieces.set('d5', victim);
+    scene.pieces.set('e4', attacker);
+
+    scene.capturePiece('d5');
+    scene.movePiece('e4', 'd5');
+
+    // Immediate, same-tick assertions: the map write inside movePiece must
+    // land on an already-emptied slot, not clobber the victim's entry.
+    expect(scene.pieces.get('d5')).toBe(attacker);
+    expect(scene._dying.has(victim)).toBe(true);
+    expect(scene.pieces.size).toBe(1);
+
+    drainAll(queue, advance);
+
+    expect(scene.pieces.get('d5')).toBe(attacker);
+    expect(victimDisposeCount).toBe(1);
+  }));
+
+  it('does not move or shrink the victim before CAPTURE_DELAY elapses (the literal bug being fixed)', () => withFakeClock(({ queue, advance }) => {
+    const { scene, removed } = makeSceneStub();
+    const { obj: victim } = makePiece('d5');
+    scene.pieces.set('d5', victim);
+
+    scene.capturePiece('d5');
+    expect(queue.length).toBe(1);
+
+    advance(50); // < CAPTURE_DELAY (110ms) — the attacker hasn't arrived yet
+    expect(50).toBeLessThan(CAPTURE_DELAY);
+    queue.shift()(performance.now());
+
+    expect(victim.position.y).toBe(0);
+    expect(victim.scale.y).toBe(1);
+    expect(removed).not.toContain(victim);
+    expect(queue.length).toBe(1); // re-queued its own continuation, still hanging
+  }));
+
+  it('en passant: the victim (on a different square than the attacker lands on) is destroyed independently', () => withFakeClock(({ queue, advance }) => {
+    const { scene, removed } = makeSceneStub();
+    let victimDisposeCount = 0;
+    const { obj: victim } = makePiece('d5', { onGeometryDispose: () => { victimDisposeCount += 1; } });
+    const { obj: attacker } = makePiece('e5');
+    scene.pieces.set('d5', victim);
+    scene.pieces.set('e5', attacker);
+
+    expect(removed).not.toContain(victim); // present at t=0
+
+    scene.capturePiece('d5');
+    scene.movePiece('e5', 'd6');
+
+    // `pieces` never holds a conflicting 'd5' entry: capturePiece already
+    // emptied it, and the attacker's destination is 'd6', not 'd5'.
+    expect(scene.pieces.has('d5')).toBe(false);
+    expect(scene.pieces.get('d6')).toBe(attacker);
+
+    drainAll(queue, advance);
+
+    expect(victimDisposeCount).toBe(1);
+    expect(scene.pieces.get('d6')).toBe(attacker);
+  }));
+
+  it('keeps the contact-shadow decal welded to the board plane while the victim group is shrinking', () => withFakeClock(({ queue, advance }) => {
+    const { scene } = makeSceneStub();
+    const { obj: victim, shadowMesh } = makePiece('d5');
+    scene.pieces.set('d5', victim);
+
+    scene.capturePiece('d5');
+
+    const expectGrounded = () => {
+      victim.updateMatrixWorld(true);
+      const worldPos = new THREE.Vector3();
+      shadowMesh.getWorldPosition(worldPos);
+      expect(worldPos.y).toBeCloseTo(CONTACT_SHADOW_Y, 5);
+    };
+
+    advance(CAPTURE_DELAY + 20); // just past the hang, early in the sink
+    queue.shift()(performance.now());
+    expectGrounded();
+
+    advance(CAPTURE_DURATION / 2); // mid-sink, mid-shrink
+    queue.shift()(performance.now());
+    expectGrounded();
+
+    advance(CAPTURE_DURATION); // well past completion
+    queue.shift()(performance.now());
+    expectGrounded();
+  }));
+
+  it('clearPieces mid-capture destroys the victim once; the still-queued rAF continuation is a no-op', () => withFakeClock(({ queue, advance }) => {
+    const { scene, removed } = makeSceneStub();
+    let disposeCount = 0;
+    const { obj: victim } = makePiece('d5', { onGeometryDispose: () => { disposeCount += 1; } });
+    scene.pieces.set('d5', victim);
+
+    const capturePromise = scene.capturePiece('d5');
+    expect(queue.length).toBe(1);
+
+    scene.clearPieces();
+
+    expect(removed).toContain(victim);
+    expect(disposeCount).toBe(1);
+    expect(scene._dying.size).toBe(0);
+
+    // Invoke the continuation clearPieces left behind in the queue: it must
+    // see the bumped _boardGen and bail out instead of re-destroying victim.
+    advance(50);
+    queue.shift()(performance.now());
+    expect(disposeCount).toBe(1);
+
+    return capturePromise.then(() => {
+      expect(disposeCount).toBe(1);
+    });
+  }));
+
+  it('capture + promotion on the same square (capturePiece(to) then removePieceAt(to)) are handled independently', () => withFakeClock(({ queue, advance }) => {
+    const { scene } = makeSceneStub();
+    let victimDisposeCount = 0;
+    let pawnDisposeCount = 0;
+    const { obj: victim } = makePiece('e8', { onGeometryDispose: () => { victimDisposeCount += 1; } });
+    const { obj: pawn } = makePiece('e7', { onGeometryDispose: () => { pawnDisposeCount += 1; } });
+    scene.pieces.set('e8', victim);
+    scene.pieces.set('e7', pawn);
+
+    // Capture on the 8th rank: the pawn takes the piece standing on e8...
+    scene.capturePiece('e8');
+    scene.movePiece('e7', 'e8');
+
+    expect(scene.pieces.get('e8')).toBe(pawn);
+    expect(scene._dying.has(victim)).toBe(true);
+
+    drainAll(queue, advance);
+
+    expect(victimDisposeCount).toBe(1);
+    expect(scene._dying.size).toBe(0);
+
+    // ...then promotes: the pawn that just landed on e8 is itself replaced.
+    scene.removePieceAt('e8');
+    expect(pawnDisposeCount).toBe(1);
+
+    const { obj: queen } = makePiece('e8');
+    scene.placePiece('e8', queen);
+
+    expect(scene.pieces.get('e8')).toBe(queen);
+    expect(scene._dying.has(queen)).toBe(false);
+  }));
+
+  it('mutates no material during the sink (proves no fade/clone crept in)', () => withFakeClock(({ queue, advance }) => {
+    const { scene } = makeSceneStub();
+    const sharedMaterial = new THREE.MeshStandardMaterial({ transparent: false, opacity: 1 });
+    let materialDisposed = false;
+    sharedMaterial.addEventListener('dispose', () => { materialDisposed = true; });
+
+    const { obj: victim, mesh: victimMesh } = makePiece('d5', { material: sharedMaterial });
+    const { obj: attacker, mesh: attackerMesh } = makePiece('e4', { material: sharedMaterial });
+    scene.pieces.set('d5', victim);
+    scene.pieces.set('e4', attacker);
+
+    scene.capturePiece('d5');
+    scene.movePiece('e4', 'd5');
+
+    drainAll(queue, advance);
+
+    expect(victimMesh.material).toBe(attackerMesh.material);
+    expect(victimMesh.material.transparent).toBe(false);
+    expect(victimMesh.material.opacity).toBe(1);
+    expect(materialDisposed).toBe(false);
+  }));
+
+  it('capturePiece on an empty square resolves immediately without queuing a frame', () => withFakeClock(({ queue }) => {
+    const { scene } = makeSceneStub();
+    const promise = scene.capturePiece('d5');
+    expect(queue.length).toBe(0);
+    return promise;
+  }));
 });

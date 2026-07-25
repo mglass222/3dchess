@@ -75,6 +75,32 @@ describe('Game', () => {
     expect(g.isGameOver()).toBe(true);
   });
 
+  it('captureTargets finds en passant even though the captured pawn is not on the destination', () => {
+    const g = new Game('rnbqkbnr/ppp1pppp/8/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3');
+    expect(g.captureTargets('e5')).toContain('d6');
+    expect(g.pieceAt('d6')).toBeNull();
+  });
+
+  it('captureTargets is empty when the piece has no captures available', () => {
+    const g = new Game();
+    expect(g.captureTargets('e2')).toEqual([]);
+  });
+
+  it('captureTargets dedupes a promotion-capture (4 verbose moves) to one destination', () => {
+    const g = new Game('r7/1P6/8/8/8/8/k6K/8 w - - 0 1');
+    expect(g.captureTargets('b7')).toEqual(['a8']);
+  });
+
+  it('kingSquare defaults to the side to move and tracks a moved king', () => {
+    const g = new Game();
+    expect(g.kingSquare()).toBe('e1');
+    expect(g.kingSquare('b')).toBe('e8');
+    g.makeMove({ from: 'e2', to: 'e4' });
+    g.makeMove({ from: 'e7', to: 'e5' });
+    g.makeMove({ from: 'e1', to: 'e2' });
+    expect(g.kingSquare('w')).toBe('e2');
+  });
+
   it('resets to a new game and emits reset', () => {
     const g = new Game();
     g.makeMove({ from: 'e2', to: 'e4' });

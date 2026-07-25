@@ -51,12 +51,22 @@ export class Input {
     if (!piece || piece.color !== this.game.turn()) return;
     this.selected = square;
     this.targets = this.game.legalTargets(square);
-    this.scene.setHighlights(this.targets);
+    // Classify from Game.captureTargets, not pieceAt(target): en passant's
+    // victim pawn is not on the destination square, so a pieceAt test would
+    // render the sharpest move in the game as a quiet dot. Chess rules stay
+    // in Game (captureTargets already derives this correctly from chess.js's
+    // verbose move flags) rather than re-deriving en passant here from pawn-
+    // file heuristics — same precedent as isPromotion above.
+    const captures = new Set(this.game.captureTargets(square));
+    this.scene.setSelection(square, this.targets.map((sq) => ({
+      square: sq,
+      kind: captures.has(sq) ? 'capture' : 'move',
+    })));
   }
 
   _clear() {
     this.selected = null;
     this.targets = [];
-    this.scene.clearHighlights();
+    this.scene.clearSelection();
   }
 }

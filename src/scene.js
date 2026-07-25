@@ -8,6 +8,7 @@ import {
   getTheme, makeGradientTexture, makeStarfield, DEFAULT_THEME, DEFAULT_FOG_DENSITY,
 } from './themes.js';
 import { CONTACT_SHADOW_Y, setPieceEnvironmentMap } from './pieces.js';
+import { MarkerLayer } from './markers.js';
 
 const LIGHT_SQ = 0xe8d6ae; // was 0xdac799 — the texture mean dropped ~0.88 -> ~0.74,
                             // so the colour comes up to hold the same on-screen value
@@ -261,6 +262,19 @@ export function createStoneTable() {
   return table;
 }
 
+export const CAPTURE_DELAY = 110;      // ms — the attacker is ~40% into its 280ms arc
+export const CAPTURE_DURATION = 230;   // ms
+// These two are a PAIR: CAPTURE_SINK (0.55) > TARGET_KING_HEIGHT (1.4) *
+// CAPTURE_END_SCALE (0.35) = 0.49, so even the tallest piece on the board is
+// fully below y=0 by the time the animation ends, and the opaque board
+// (BoxGeometry(1, 0.18, 1), top face at y=0 — see createChessBoard) clips it
+// for free. No transparent material, no shader recompile, no dispose
+// obligation. Don't raise one without the other: sinking further without
+// shrinking to match would poke the piece out beneath the table slab at
+// grazing camera angles.
+const CAPTURE_SINK = 0.55;             // world units below the board top
+const CAPTURE_END_SCALE = 0.35;
+
 function disposePieceGeometries(object3d) {
   const disposed = new Set();
   object3d.traverse((child) => {
@@ -333,14 +347,32 @@ export function applyThemeFog(fog, theme) {
 export function syncContactShadow(pieceObject) {
   const shadow = pieceObject.userData?.contactShadow;
   if (!shadow) return;
-  shadow.position.y = CONTACT_SHADOW_Y - pieceObject.position.y;
+  // The decal is a child of pieceObject, so its world y is
+  // pieceObject.position.y + pieceObject.scale.y * shadow.position.y. Solving
+  // for shadow.position.y such that that world y equals CONTACT_SHADOW_Y gives
+  // the division below. At scale 1 this reduces to the original expression;
+  // the capture animation shrinks the group, and without dividing by scale the
+  // decal would drift off the board plane by (1 - scale) * offset. `|| 1`
+  // guards a degenerate zero scale.
+  const scale = pieceObject.scale.y || 1;
+  shadow.position.y = (CONTACT_SHADOW_Y - pieceObject.position.y) / scale;
 }
 
 export class Scene {
   constructor(container) {
     this.container = container;
     this.pieces = new Map();      // square -> Object3D
-    this.highlights = [];         // Mesh[]
+    // Pieces detached from `this.pieces` but still in the scene graph while
+    // their capture animation plays. clearPieces() cannot see them any other
+    // way — it iterates `pieces` — so a New Game mid-capture would orphan the
+    // Object3D permanently.
+    this._dying = new Set();
+    // Board generation. Bumped by clearPieces(); an in-flight capture whose
+    // stamp is stale bails out instead of re-destroying an already-destroyed
+    // object. Scene-scoped rather than object-scoped (unlike movePiece's
+    // userData._moveGen) precisely because a dying piece is no longer
+    // reachable from this.pieces.
+    this._boardGen = 0;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -396,10 +428,7 @@ export class Scene {
     this.raycaster = new THREE.Raycaster();
     this._pointer = new THREE.Vector2();
 
-    this._highlightGeom = new THREE.RingGeometry(0.30, 0.42, 32);
-    this._highlightMat = new THREE.MeshBasicMaterial({
-      color: 0x49e0a0, transparent: true, opacity: 0.85, side: THREE.DoubleSide,
-    });
+    this.markers = new MarkerLayer(this.scene);
 
     window.addEventListener('resize', () => this._resize());
     this._resize();
@@ -486,6 +515,7 @@ export class Scene {
   _animate() {
     requestAnimationFrame(() => this._animate());
     this.controls.update();
+    this.markers.update(performance.now());
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -497,17 +527,89 @@ export class Scene {
     this.scene.add(object3d);
   }
 
+  // Single teardown path for a piece Object3D: detach from the scene graph and
+  // free its owned geometry clones. Frees no materials — the piece wood
+  // materials (pieces.js MATERIALS) and the contact-shadow material are
+  // shared app-wide singletons owned by pieces.js, not this object. Used by
+  // removePieceAt, clearPieces, and the terminal branch of the capture
+  // animation, so there is exactly one place that knows how to destroy a
+  // piece.
+  _destroyPiece(obj) {
+    this.scene.remove(obj);
+    disposePieceGeometries(obj);
+  }
+
   removePieceAt(square) {
     const obj = this.pieces.get(square);
     if (!obj) return;
     this.pieces.delete(square);
-    this.scene.remove(obj);
-    disposePieceGeometries(obj);
-    // Piece materials are shared app-wide and owned by pieces.js, so they live on.
+    this._destroyPiece(obj);
   }
 
   clearPieces() {
+    // Bump first, then destroy everything mid-capture, then clear the set,
+    // and only then run the normal loop — so a queued rAF continuation for a
+    // dying piece reads the new generation and bails out instead of running
+    // _destroyPiece a second time against an object this call already freed.
+    this._boardGen++;
+    for (const obj of this._dying) this._destroyPiece(obj);
+    this._dying.clear();
     for (const square of [...this.pieces.keys()]) this.removePieceAt(square);
+  }
+
+  // Detach the piece on `square` from the board synchronously (so a same-tick
+  // movePiece onto `square` never clobbers it - see the map-write in
+  // movePiece), then animate it sinking through the board plane. Returns a
+  // promise that resolves once the piece is destroyed. A no-op square
+  // resolves immediately without queuing a frame.
+  capturePiece(square) {
+    const obj = this.pieces.get(square);
+    if (!obj) return Promise.resolve();
+    this.pieces.delete(square);
+    this._dying.add(obj);
+    return this._animateCapture(obj);
+  }
+
+  // Sink-and-shrink, not a fade: see CAPTURE_SINK/CAPTURE_END_SCALE above for
+  // why a fade was rejected. Mutates only this object's own transform (y and
+  // scale) plus its contact-shadow child's local y via syncContactShadow -
+  // zero material work, so there is nothing to dispose beyond the geometry
+  // _destroyPiece already frees.
+  _animateCapture(obj) {
+    const myGen = this._boardGen;
+    const startY = obj.position.y;
+    const t0 = performance.now();
+    return new Promise((resolve) => {
+      const step = (now) => {
+        if (this._boardGen !== myGen) {
+          // clearPieces() already destroyed this object (see the mid-capture
+          // branch there) - don't touch it again.
+          resolve();
+          return;
+        }
+        const elapsed = now - t0;
+        if (elapsed < CAPTURE_DELAY) {
+          // Hang while the attacker is still closing the distance - the
+          // victim doesn't react until it's actually struck.
+          requestAnimationFrame(step);
+          return;
+        }
+        const t = Math.min(1, (elapsed - CAPTURE_DELAY) / CAPTURE_DURATION);
+        const ease = t * t; // ease-in: slow start, then drops
+        obj.position.y = startY - CAPTURE_SINK * ease;
+        const scale = 1 - (1 - CAPTURE_END_SCALE) * ease;
+        obj.scale.setScalar(scale);
+        syncContactShadow(obj);
+        if (t < 1) {
+          requestAnimationFrame(step);
+          return;
+        }
+        this._dying.delete(obj);
+        this._destroyPiece(obj);
+        resolve();
+      };
+      requestAnimationFrame(step);
+    });
   }
 
   // Animate the piece currently on `from` to `to`. Returns a promise that
@@ -522,6 +624,12 @@ export class Scene {
     obj.userData.square = to;
 
     const myGen = (obj.userData._moveGen = (obj.userData._moveGen ?? 0) + 1);
+    // clearPieces() bumps this before it destroys every piece in `this.pieces`
+    // (which, by the time this rAF chain runs, includes `obj` under `to` -
+    // see the map-write above), so a stale stamp means obj has already been
+    // scene.remove()'d and its geometry disposed. Bail out the same way as a
+    // superseded move rather than keep mutating a destroyed object.
+    const myBoardGen = this._boardGen;
     const start = obj.position.clone();
     const end = squareToWorld(to);
     const lift = 0.6;
@@ -529,11 +637,13 @@ export class Scene {
     const t0 = performance.now();
     return new Promise((resolve) => {
       const step = (now) => {
-        if (obj.userData._moveGen !== myGen) {
-          // Superseded mid-arc: without this, the decal is left permanently
-          // offset by whatever the lift was at the moment of supersession -
-          // a blob floating in mid-air. Reachable via chained movePiece calls
-          // (castling) and a New Game that resyncs the board mid-animation.
+        if (obj.userData._moveGen !== myGen || this._boardGen !== myBoardGen) {
+          // Superseded mid-arc, or the board was cleared out from under us:
+          // without the syncContactShadow call here for the supersede case,
+          // the decal is left permanently offset by whatever the lift was at
+          // the moment of supersession - a blob floating in mid-air.
+          // Reachable via chained movePiece calls (castling) and a New Game
+          // that resyncs the board mid-animation.
           syncContactShadow(obj);
           resolve();
           return;
@@ -551,23 +661,42 @@ export class Scene {
     });
   }
 
-  setHighlights(squares) {
-    this.clearHighlights();
-    for (const sq of squares) {
-      const ring = new THREE.Mesh(this._highlightGeom, this._highlightMat);
-      const { x, z } = squareToWorld(sq);
-      ring.position.set(x, 0.02, z);
-      ring.rotation.x = -Math.PI / 2;
-      this.scene.add(ring);
-      this.highlights.push(ring);
-    }
+  // Named for what Input actually means: `square` is the piece the player
+  // picked up, `targets` its legal destinations. Each target is either a bare
+  // square string (normalized here to a quiet 'move' marker, so a stray
+  // array-of-strings caller still works) or a { square, kind } pair where
+  // kind is 'move' or 'capture'.
+  setSelection(square, targets = []) {
+    this.markers.set('selected', [{ square, kind: 'selected' }]);
+    this.markers.set('targets', targets.map(
+      (t) => (typeof t === 'string' ? { square: t, kind: 'move' } : t),
+    ));
   }
 
-  clearHighlights() {
-    // Do NOT dispose ring.geometry/material — they are the shared
-    // _highlightGeom/_highlightMat singletons owned by the Scene.
-    for (const ring of this.highlights) this.scene.remove(ring);
-    this.highlights = [];
+  // Clears exactly the 'selected' and 'targets' slots — lastMove and check
+  // live in separate slots and must survive this (Input.disable() calls this
+  // via _clear() at the top of every onMove and every AI turn).
+  clearSelection() {
+    this.markers.clear('selected');
+    this.markers.clear('targets');
+  }
+
+  setLastMove(from, to) {
+    if (!from || !to) { this.markers.clear('lastMove'); return; }
+    this.markers.set('lastMove', [
+      { square: from, kind: 'lastMove' },
+      { square: to, kind: 'lastMove' },
+    ]);
+  }
+
+  setCheck(square) {
+    if (!square) { this.markers.clear('check'); return; }
+    this.markers.set('check', [{ square, kind: 'check' }]);
+  }
+
+  // Board-resync path (e.g. New Game): drop every marker in every slot.
+  clearMarkers() {
+    this.markers.clearAll();
   }
 
   // Apply a theme: a gradient sky, plus optional starfield.

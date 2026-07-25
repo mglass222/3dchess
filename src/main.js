@@ -27,26 +27,49 @@ let gameId = 0;         // bumped on every New Game; stale AI replies are discar
 let booted = false;     // true once models + engine finish loading; gates UI handlers
 let pieceSetLoadId = 0; // bumped on each requested piece-set load; stale replies are ignored
 let appliedPieceSetKey = null;
+let lastMove = null;    // {from,to} of the most recent move, so a board rebuild
+                        // (piece-set switch) can re-apply the highlight
 
 // --- board sync ---------------------------------------------------------------
 function syncBoardFromGame() {
   scene.clearPieces();
+  scene.clearMarkers();
   for (const sq of allSquares()) {
     const p = game.pieceAt(sq);
     if (p) scene.placePiece(sq, createPiece(p.type, p.color));
   }
+  // A piece-set switch mid-game keeps its last-move highlight (lastMove
+  // survives the call); New Game and loadFen null out lastMove before calling
+  // here, so they don't.
+  if (lastMove) scene.setLastMove(lastMove.from, lastMove.to);
+  scene.setCheck(game.isCheck() ? game.kingSquare(game.turn()) : null);
 }
 
 // --- reflect a move change-set on the board -----------------------------------
 async function onMove(change) {
+  const myGame = gameId;
   input.disable();
-  if (change.captured) scene.removePieceAt(change.captured.square);
-  await scene.movePiece(change.from, change.to);
+  lastMove = { from: change.from, to: change.to };
+  scene.setLastMove(change.from, change.to);
+  scene.setCheck(null); // the previous glow is stale the instant a move lands
+
+  // capturePiece MUST be called before movePiece: it detaches the victim from
+  // scene.pieces synchronously, which is what stops movePiece's
+  // pieces.set(to, obj) from clobbering the victim's map entry. The two then
+  // animate concurrently — the victim sinks as the attacker arrives instead of
+  // popping out before it sets off.
+  const capture = change.captured ? scene.capturePiece(change.captured.square) : null;
+  await Promise.all([scene.movePiece(change.from, change.to), capture]);
+  if (myGame !== gameId) return; // a New Game landed while we were animating
+
   if (change.castle) await scene.movePiece(change.castle.rookFrom, change.castle.rookTo);
   if (change.promotion) {
     scene.removePieceAt(change.to);
     scene.placePiece(change.to, createPiece(change.promotion, change.piece.color));
   }
+  if (myGame !== gameId) return;
+
+  scene.setCheck(game.isCheck() ? game.kingSquare(game.turn()) : null);
   ui.setStatus(statusText(game));
   if (game.isGameOver()) return;
   if (game.turn() === aiColor) triggerAI();
@@ -141,6 +164,13 @@ function onNewGame(side, skill) {
   ai.setSkill(skill);
   if (aiBusy) ai.stop();                     // hurry the stale search so the engine frees
   game.reset();
+  lastMove = null;
+  // Must precede syncBoardFromGame: it calls scene.clearMarkers(), which erases
+  // the selection ring, but only Input.disable() clears Input's own selected/
+  // targets state (enable() just flips the flag). Without this, a New Game while
+  // a piece is selected leaves that selection live but invisible, and the next
+  // click on a stale target commits a move with nothing ever highlighted.
+  input.disable();
   syncBoardFromGame();
   ui.setThinking(false);
   ui.setStatus(statusText(game));
@@ -167,7 +197,10 @@ if (import.meta.env.DEV) {
     // Test helper: jump to a FEN, resync the board, disable AI (tests drive both sides).
     loadFen(fen) {
       aiColor = null;
+      gameId++;       // invalidate any in-flight animation/AI search from before the jump
+      lastMove = null;
       game.reset(fen);
+      input.disable(); // clears stale selection state; see onNewGame
       syncBoardFromGame();
       ui.setStatus(statusText(game));
       input.enable();

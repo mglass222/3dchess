@@ -38,6 +38,24 @@ export class Game {
       .some((m) => m.to === to && m.flags.includes('p'));
   }
 
+  // Destination squares from `square` that capture something. Derived from
+  // chess.js's verbose moves rather than "is there a piece on the target",
+  // because en passant captures a pawn that is NOT on the destination square —
+  // chess.js still sets `captured` on that move, so this gets ep right for free.
+  // legalTargets deliberately keeps returning plain strings: making it return
+  // richer objects would ripple into input.js's targets.includes(square) and
+  // every assertion in game.test.js / input.test.js for no gain.
+  captureTargets(square) {
+    const moves = this.chess.moves({ square, verbose: true });
+    return [...new Set(moves.filter((m) => m.captured).map((m) => m.to))];
+  }
+
+  // Square of `color`'s king ('e1'), or null. chess.js rejects a FEN with a
+  // missing king, so the null branch is defensive only.
+  kingSquare(color = this.turn()) {
+    return this.chess.findPiece({ type: 'k', color })[0] ?? null;
+  }
+
   // Applies a move. Returns the change-set on success, or null if illegal.
   makeMove({ from, to, promotion }) {
     let move;
