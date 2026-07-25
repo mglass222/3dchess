@@ -11,13 +11,16 @@ import {
   CAPTURE_END_SCALE,
   CAPTURE_SINK_MARGIN,
   ENVIRONMENT_BLUR,
+  LIGHT_RIG,
   MOVE_DEFAULT,
   MOVE_PROFILES,
   MOVE_SETTLE_MS,
   MOVE_DURATION_CLAMP,
   Scene,
   applyEnvironmentMap,
+  applyThemeEnvIntensity,
   applyThemeFog,
+  applyThemeLighting,
   captureDelayFor,
   createBoardMaterials,
   createChessBoard,
@@ -668,6 +671,144 @@ describe('scene rendering helpers', () => {
     scene._render();
 
     expect(rendererCalls).toEqual([[scene.scene, scene.camera]]);
+  });
+});
+
+describe('thematic lighting', () => {
+  // Real light instances (not fakes) so .color.set(...) exercises THREE's
+  // actual Color parsing, matching what applyThemeLighting does in production.
+  function makeRig(base = LIGHT_RIG.lit) {
+    return {
+      hemiLight: new THREE.HemisphereLight(0xf4fff4, 0x33402c, base.hemi),
+      keyLight: new THREE.DirectionalLight(0xfff1cf, base.key),
+      rimLight: new THREE.DirectionalLight(0xbad7ff, base.rim),
+      base,
+      renderer: { toneMappingExposure: base.exposure },
+    };
+  }
+
+  function snapshot(rig) {
+    return {
+      hemi: rig.hemiLight.intensity,
+      hemiSky: rig.hemiLight.color.getHexString(),
+      hemiGround: rig.hemiLight.groundColor.getHexString(),
+      key: rig.keyLight.intensity,
+      keyColor: rig.keyLight.color.getHexString(),
+      rim: rig.rimLight.intensity,
+      rimColor: rig.rimLight.color.getHexString(),
+      exposure: rig.renderer.toneMappingExposure,
+    };
+  }
+
+  it('applyThemeLighting is idempotent: applying dusk twice yields identical values', () => {
+    const rig = makeRig();
+    applyThemeLighting(rig, getTheme('dusk'));
+    const first = snapshot(rig);
+    applyThemeLighting(rig, getTheme('dusk'));
+    const second = snapshot(rig);
+    expect(second).toEqual(first);
+  });
+
+  it('dusk then midnight lands exactly on LIGHT_RIG.lit\'s numbers and the original four colours — no compounding', () => {
+    const rig = makeRig();
+    applyThemeLighting(rig, getTheme('dusk'));
+    applyThemeLighting(rig, getTheme('midnight'));
+
+    expect(rig.hemiLight.intensity).toBeCloseTo(LIGHT_RIG.lit.hemi, 5);
+    expect(rig.keyLight.intensity).toBeCloseTo(LIGHT_RIG.lit.key, 5);
+    expect(rig.rimLight.intensity).toBeCloseTo(LIGHT_RIG.lit.rim, 5);
+    expect(rig.renderer.toneMappingExposure).toBeCloseTo(LIGHT_RIG.lit.exposure, 5);
+
+    expect(rig.hemiLight.color.getHexString()).toBe('f4fff4');
+    expect(rig.hemiLight.groundColor.getHexString()).toBe('33402c');
+    expect(rig.keyLight.color.getHexString()).toBe('fff1cf');
+    expect(rig.rimLight.color.getHexString()).toBe('bad7ff');
+  });
+
+  it('composes with LIGHT_RIG.fallback: the same theme multipliers scale the fallback numbers, not override them', () => {
+    const rig = makeRig(LIGHT_RIG.fallback);
+    applyThemeLighting(rig, getTheme('dusk'));
+    const { light } = getTheme('dusk');
+
+    expect(rig.hemiLight.intensity).toBeCloseTo(LIGHT_RIG.fallback.hemi * light.hemiIntensity, 5);
+    expect(rig.keyLight.intensity).toBeCloseTo(LIGHT_RIG.fallback.key * light.keyIntensity, 5);
+    expect(rig.rimLight.intensity).toBeCloseTo(LIGHT_RIG.fallback.rim * light.rimIntensity, 5);
+    expect(rig.renderer.toneMappingExposure)
+      .toBeCloseTo(LIGHT_RIG.fallback.exposure * light.exposure, 5);
+  });
+
+  it('midnight is the identity theme: exactly 0.22/1.85/0.4, exposure 1.00, and the four base colours', () => {
+    const rig = makeRig();
+    applyThemeLighting(rig, getTheme('midnight'));
+
+    expect(rig.hemiLight.intensity).toBeCloseTo(0.22, 5);
+    expect(rig.keyLight.intensity).toBeCloseTo(1.85, 5);
+    expect(rig.rimLight.intensity).toBeCloseTo(0.4, 5);
+    expect(rig.renderer.toneMappingExposure).toBeCloseTo(1.00, 5);
+
+    expect(rig.hemiLight.color.getHexString()).toBe('f4fff4');
+    expect(rig.hemiLight.groundColor.getHexString()).toBe('33402c');
+    expect(rig.keyLight.color.getHexString()).toBe('fff1cf');
+    expect(rig.rimLight.color.getHexString()).toBe('bad7ff');
+  });
+
+  it('applyThemeEnvIntensity round-trips 1.2 -> 0.9 -> 1.0 back to exactly the board defaults, with material.version unchanged throughout', () => {
+    const { light, dark, frame } = createBoardMaterials();
+    const root = new THREE.Group();
+    root.add(new THREE.Mesh(new THREE.BoxGeometry(), light));
+    root.add(new THREE.Mesh(new THREE.BoxGeometry(), dark));
+    root.add(new THREE.Mesh(new THREE.BoxGeometry(), frame));
+    const versions = { light: light.version, dark: dark.version, frame: frame.version };
+
+    applyThemeEnvIntensity(root, 1.2);
+    expect(light.envMapIntensity).toBeCloseTo(0.28 * 1.2, 5);
+    expect(dark.envMapIntensity).toBeCloseTo(0.25 * 1.2, 5);
+    expect(frame.envMapIntensity).toBeCloseTo(0.22 * 1.2, 5);
+
+    applyThemeEnvIntensity(root, 0.9);
+    expect(light.envMapIntensity).toBeCloseTo(0.28 * 0.9, 5);
+    expect(dark.envMapIntensity).toBeCloseTo(0.25 * 0.9, 5);
+    expect(frame.envMapIntensity).toBeCloseTo(0.22 * 0.9, 5);
+
+    applyThemeEnvIntensity(root, 1.0);
+    expect(light.envMapIntensity).toBeCloseTo(0.28, 5);
+    expect(dark.envMapIntensity).toBeCloseTo(0.25, 5);
+    expect(frame.envMapIntensity).toBeCloseTo(0.22, 5);
+
+    // Plain uniform refresh — no needsUpdate, no shader recompile — proved by
+    // an unchanged material.version across every call above.
+    expect(light.version).toBe(versions.light);
+    expect(dark.version).toBe(versions.dark);
+    expect(frame.version).toBe(versions.frame);
+  });
+
+  it('setTheme does not throw on a lights-less Object.create(Scene.prototype) stub (existing tests build Scenes this way)', () => {
+    const originalDocument = globalThis.document;
+    globalThis.document = {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          createLinearGradient: () => ({ addColorStop() {} }),
+          fillStyle: null,
+          fillRect() {},
+        }),
+      }),
+    };
+    try {
+      const scene = Object.create(Scene.prototype);
+      scene.scene = new THREE.Scene();
+      scene._bgTexture = null;
+      scene._starfield = null;
+      scene._fog = new THREE.FogExp2(0x000000, DEFAULT_FOG_DENSITY);
+      scene.scene.fog = scene._fog;
+      // No keyLight/hemiLight/rimLight/renderer/_lightBase at all — the guard
+      // in setTheme must skip applyThemeLighting entirely rather than throw.
+
+      expect(() => scene.setTheme('dusk')).not.toThrow();
+    } finally {
+      globalThis.document = originalDocument;
+    }
   });
 });
 

@@ -9,6 +9,7 @@ import {
   PIECE_TYPES,
   getPieceMaterial,
   setPieceEnvironmentMap,
+  setPieceEnvIntensity,
   unwrapSeamTriangles,
   GRAIN_ARC_SCALE,
   GRAIN_HEIGHT_SCALE,
@@ -406,5 +407,28 @@ describe('pieces', () => {
     // will actually recompile with USE_ENVMAP defined.
     expect(white.version).toBeGreaterThan(versionBefore.w);
     expect(blue.version).toBeGreaterThan(versionBefore.b);
+  });
+
+  it('setPieceEnvIntensity scales from each material\'s own captured base, round-tripping back to 0.9/1.0', () => {
+    // white/blue are shared, long-lived singletons (MATERIALS) — another test
+    // above asserts them at exactly 0.9/1.0, so this must leave them there
+    // when it's done, or it becomes order-dependent against that test.
+    const white = getPieceMaterial('w');
+    const blue = getPieceMaterial('b');
+    try {
+      setPieceEnvIntensity(1.2);
+      expect(white.envMapIntensity).toBeCloseTo(0.9 * 1.2, 5);
+      expect(blue.envMapIntensity).toBeCloseTo(1.0 * 1.2, 5);
+
+      setPieceEnvIntensity(0.9);
+      expect(white.envMapIntensity).toBeCloseTo(0.9 * 0.9, 5);
+      expect(blue.envMapIntensity).toBeCloseTo(1.0 * 0.9, 5);
+
+      setPieceEnvIntensity(1.0);
+      expect(white.envMapIntensity).toBeCloseTo(0.9, 5);
+      expect(blue.envMapIntensity).toBeCloseTo(1.0, 5);
+    } finally {
+      setPieceEnvIntensity(1); // reset the shared singletons for later tests
+    }
   });
 });

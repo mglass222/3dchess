@@ -6,8 +6,9 @@ import {
 } from './coords.js';
 import {
   getTheme, makeGradientTexture, makeStarfield, DEFAULT_THEME, DEFAULT_FOG_DENSITY,
+  THEME_LIGHT_DEFAULT,
 } from './themes.js';
-import { CONTACT_SHADOW_Y, setPieceEnvironmentMap } from './pieces.js';
+import { CONTACT_SHADOW_Y, setPieceEnvironmentMap, setPieceEnvIntensity } from './pieces.js';
 import { MarkerLayer } from './markers.js';
 import { createPostProcessing } from './postfx.js';
 
@@ -31,6 +32,17 @@ export const ENVIRONMENT_BLUR = 0.04;
 // per-material envMapIntensity is the live knob. Kept as a sane default for any
 // standard material added later that misses the traverse.
 const ENVIRONMENT_INTENSITY = 0.25;
+
+// The base punctual-light rig _addLights chooses between, keyed on whether
+// the env map loaded (see the `lit` comment there). Published so
+// applyThemeLighting always scales FROM these fixed numbers rather than
+// from whatever the lights currently hold — that's what makes repeated
+// theme switches idempotent instead of compounding.
+export const LIGHT_RIG = {
+  lit: { hemi: 0.22, key: 1.85, rim: 0.4, exposure: 1.00 },
+  fallback: { hemi: 0.70, key: 2.30, rim: 0.65, exposure: 1.08 },
+};
+
 export const BOARD_TEXTURES = {
   light: {
     url: 'textures/board/maple-grain.svg',
@@ -404,6 +416,49 @@ export function applyThemeFog(fog, theme) {
   return fog;
 }
 
+// Applies a theme's light block to the three live lights plus the renderer's
+// exposure. Colours are set absolutely; intensities are always BASE *
+// multiplier (never current * multiplier) — that's what makes this
+// idempotent (calling it twice with the same theme is a no-op past the first
+// call) and what makes repeated theme switches never compound. `base` is
+// LIGHT_RIG.lit or LIGHT_RIG.fallback (see _addLights/this._lightBase), so
+// the same multipliers compose with whichever rig _envFailed picked rather
+// than overriding it.
+export function applyThemeLighting({
+  hemiLight, keyLight, rimLight, base, renderer,
+}, theme) {
+  const light = { ...THEME_LIGHT_DEFAULT, ...(theme.light ?? {}) };
+
+  hemiLight.color.set(light.hemiSky);
+  hemiLight.groundColor.set(light.hemiGround);
+  hemiLight.intensity = base.hemi * light.hemiIntensity;
+
+  keyLight.color.set(light.key);
+  keyLight.intensity = base.key * light.keyIntensity;
+
+  rimLight.color.set(light.rim);
+  rimLight.intensity = base.rim * light.rimIntensity;
+
+  renderer.toneMappingExposure = base.exposure * light.exposure;
+}
+
+// Rescales envMapIntensity on every material applyEnvironmentMap already
+// stamped (board, frame, stone — anything under `root` with an envMap), by
+// `factor` relative to each material's OWN original intensity, captured into
+// userData.baseEnvMapIntensity on first call so repeated theme switches never
+// compound. Plain uniform refresh in three (refreshUniformsStandard) — no
+// needsUpdate, no recompile — so this is safe to call on every theme switch.
+export function applyThemeEnvIntensity(root, factor) {
+  root.traverse((child) => {
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) {
+      if (!material || !material.isMeshStandardMaterial) continue;
+      material.userData.baseEnvMapIntensity ??= material.envMapIntensity;
+      material.envMapIntensity = material.userData.baseEnvMapIntensity * factor;
+    }
+  });
+}
+
 // Cancels the parent's arc-hop lift on the piece's contact-shadow decal so it
 // stays welded to the board plane in world space, while x/z still track the
 // piece through the parent transform. Call after every write to
@@ -556,11 +611,13 @@ export class Scene {
     // slowly, and a machine with no WebGL2 at all already died constructing the
     // renderer. This covers PMREM failing outright - e.g. render-target OOM.
     const lit = !this._envFailed;
+    const base = LIGHT_RIG[lit ? 'lit' : 'fallback'];
+    this._lightBase = base;
 
-    this.hemiLight = new THREE.HemisphereLight(0xf4fff4, 0x33402c, lit ? 0.22 : 0.7);
+    this.hemiLight = new THREE.HemisphereLight(0xf4fff4, 0x33402c, base.hemi);
     this.scene.add(this.hemiLight);
 
-    this.keyLight = new THREE.DirectionalLight(0xfff1cf, lit ? 1.85 : 2.3);
+    this.keyLight = new THREE.DirectionalLight(0xfff1cf, base.key);
     const key = this.keyLight;
     key.position.set(6.5, 11, 5);
     key.castShadow = true;
@@ -574,11 +631,11 @@ export class Scene {
     key.shadow.bias = -0.00015;
     this.scene.add(key);
 
-    this.rimLight = new THREE.DirectionalLight(0xbad7ff, lit ? 0.4 : 0.65);
+    this.rimLight = new THREE.DirectionalLight(0xbad7ff, base.rim);
     this.rimLight.position.set(-8, 5, -7);
     this.scene.add(this.rimLight);
 
-    if (!lit) this.renderer.toneMappingExposure = 1.08;
+    if (!lit) this.renderer.toneMappingExposure = base.exposure;
   }
 
   _buildBoard() {
@@ -908,6 +965,25 @@ export class Scene {
       this._starfield = makeStarfield();
       this.scene.add(this._starfield);
     }
+
+    // Guarded: some tests build a Scene via Object.create(Scene.prototype)
+    // with no lights/renderer at all (e.g. the fog and marker tests above),
+    // and would throw here without the check. Real instances always have
+    // keyLight by the time setTheme first runs (constructor calls _addLights
+    // before setTheme).
+    if (this.keyLight) {
+      applyThemeLighting({
+        hemiLight: this.hemiLight,
+        keyLight: this.keyLight,
+        rimLight: this.rimLight,
+        base: this._lightBase,
+        renderer: this.renderer,
+      }, theme);
+    }
+    const env = theme.light?.env ?? 1;
+    applyThemeEnvIntensity(this.scene, env);
+    setPieceEnvIntensity(env);
+
     this.currentTheme = theme.key;
   }
 

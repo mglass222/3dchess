@@ -383,6 +383,20 @@ export function setPieceEnvironmentMap(texture) {
   }
 }
 
+// Mirrors scene.js's applyThemeEnvIntensity for the piece materials, which
+// live here as module-scope singletons rather than under the scene graph a
+// traverse can reach — pieces load asynchronously, after the constructor's
+// first setTheme call, so a scene.traverse alone would miss them at boot.
+// Captures each material's own original envMapIntensity into userData on
+// first call (before any scaling), so repeated theme switches scale from that
+// fixed base rather than compounding.
+export function setPieceEnvIntensity(factor) {
+  for (const material of Object.values(MATERIALS)) {
+    material.userData.baseEnvMapIntensity ??= material.envMapIntensity;
+    material.envMapIntensity = material.userData.baseEnvMapIntensity * factor;
+  }
+}
+
 // Exported so tests can compute expected UV spans/seam pushes from these
 // directly instead of duplicating the numbers.
 export const GRAIN_ARC_SCALE = 1.25;

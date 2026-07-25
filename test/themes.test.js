@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   THEMES, DEFAULT_THEME, getTheme, makeStarfield, makeGradientTexture,
+  THEME_LIGHT_DEFAULT, THEME_INTENSITY_RANGE, THEME_ENV_RANGE, THEME_EXPOSURE_RANGE,
 } from '../src/themes.js';
 import { preToneMapCompensate } from '../src/postfx.js';
 
@@ -80,5 +81,45 @@ describe('themes', () => {
     for (const key of ['egypt', 'paris', 'london', 'rome', 'newyork']) {
       expect(keys).not.toContain(key);
     }
+  });
+
+  describe('thematic lighting data', () => {
+    it('midnight carries no light block at all (the mechanically-testable identity theme)', () => {
+      expect(getTheme('midnight').light).toBeUndefined();
+    });
+
+    it('every non-midnight theme has a light block, and every field validates', () => {
+      const colorPattern = /^#[0-9a-f]{6}$/i;
+      const nonMidnight = THEMES.filter((t) => t.key !== 'midnight');
+      expect(nonMidnight.length).toBeGreaterThanOrEqual(4);
+
+      for (const theme of nonMidnight) {
+        const light = theme.light;
+        expect(light).toBeDefined();
+
+        expect(light.key).toMatch(colorPattern);
+        expect(light.hemiSky).toMatch(colorPattern);
+        expect(light.hemiGround).toMatch(colorPattern);
+        expect(light.rim).toMatch(colorPattern);
+
+        for (const field of ['keyIntensity', 'hemiIntensity', 'rimIntensity']) {
+          expect(light[field]).toBeGreaterThanOrEqual(THEME_INTENSITY_RANGE[0]);
+          expect(light[field]).toBeLessThanOrEqual(THEME_INTENSITY_RANGE[1]);
+        }
+        expect(light.env).toBeGreaterThanOrEqual(THEME_ENV_RANGE[0]);
+        expect(light.env).toBeLessThanOrEqual(THEME_ENV_RANGE[1]);
+        expect(light.exposure).toBeGreaterThanOrEqual(THEME_EXPOSURE_RANGE[0]);
+        expect(light.exposure).toBeLessThanOrEqual(THEME_EXPOSURE_RANGE[1]);
+      }
+    });
+
+    it('THEME_LIGHT_DEFAULT matches the Tier-1 calibration colours exactly, with 1x multipliers', () => {
+      expect(THEME_LIGHT_DEFAULT).toEqual({
+        key: '#fff1cf', keyIntensity: 1,
+        hemiSky: '#f4fff4', hemiGround: '#33402c', hemiIntensity: 1,
+        rim: '#bad7ff', rimIntensity: 1,
+        env: 1, exposure: 1,
+      });
+    });
   });
 });
