@@ -141,8 +141,17 @@ function createWoodMaterial({
 // Shared, long-lived materials (one per color) applied to every piece clone.
 const MATERIALS = {
   w: createWoodMaterial({
-    baseHex: 0xe6d3b6,
-    grainHex: 0xf2e3ca,
+    // These read far more saturated than the pieces do on screen, deliberately.
+    // The map is the only source of piece colour (material.color is white), and
+    // the IBL, clearcoat and sheen layers all add near-neutral highlight on top,
+    // so roughly 58% of the map's saturation is washed out by the time it is
+    // rendered. Measured at the default orbit: 0xe6d3b6 (source saturation 0.21)
+    // came out at 0.08, which read as plain white; 0xe8c48b (0.40) lands at 0.19,
+    // which reads as cream. Judge any change to these by the rendered result, not
+    // by the swatch — and note the pair also holds a 1.073 base:grain luminance
+    // ratio, matched to the blue pieces so both sets carry the same grain depth.
+    baseHex: 0xe8c48b,
+    grainHex: 0xf3d5a3,
     seed: 0.8,
     roughness: 0.26,
     metalness: 0.02,
