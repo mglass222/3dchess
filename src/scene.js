@@ -11,6 +11,7 @@ import {
 import { CONTACT_SHADOW_Y, setPieceEnvironmentMap, setPieceEnvIntensity } from './pieces.js';
 import { MarkerLayer } from './markers.js';
 import { createPostProcessing } from './postfx.js';
+import { CameraFlight, easeOutCubic, newGamePose, CAMERA_NEW_GAME_DURATION } from './camera.js';
 
 const LIGHT_SQ = 0xe8d6ae; // was 0xdac799 — the texture mean dropped ~0.88 -> ~0.74,
                             // so the colour comes up to hold the same on-screen value
@@ -529,6 +530,18 @@ export class Scene {
     this.controls.minPolarAngle = 0.05;
     this.controls.maxPolarAngle = CAMERA_MAX_POLAR_ANGLE;
 
+    // Tier 3 C1: camera flight (New Game orbit-in). Constructed after
+    // `controls` because it wires an abort listener onto it (see camera.js's
+    // module doc for the whole "flight writes position, controls clamps it"
+    // design). reducedMotion is read here, at construction time in the
+    // browser - not at module import time - so camera.js itself stays
+    // import-clean under node (see its own comment on this).
+    this.cameraFlight = new CameraFlight({
+      camera: this.camera,
+      controls: this.controls,
+      reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
+    });
+
     // Must run after applyRendererQuality (above) because fromScene issues real
     // draw calls, and before the first render so scene.environment is set before
     // any envMap shader recompile. _addLights reads this._envFailed (set here)
@@ -658,6 +671,11 @@ export class Scene {
 
   _animate() {
     requestAnimationFrame(() => this._animate());
+    // Flight writes camera.position; controls.update() re-derives its
+    // spherical from that position and applies the min/maxDistance and
+    // min/maxPolarAngle clamps - see camera.js's module doc for why this
+    // ordering (flight -> controls -> markers -> render) is load-bearing.
+    this.cameraFlight.update(performance.now());
     this.controls.update();
     this.markers.update(performance.now());
     this._render();
@@ -948,6 +966,22 @@ export class Scene {
   // Board-resync path (e.g. New Game): drop every marker in every slot.
   clearMarkers() {
     this.markers.clearAll();
+  }
+
+  // Tier 3 C1: New Game orbit-in. `side` is 'w' or 'b' (whichever side is
+  // about to play) - see camera.js#newGamePose for the actual pose numbers
+  // and camera.js's module doc for why input is never gated during this
+  // (nothing here calls input.disable() or touches controls.enabled). Every
+  // call - including a second New Game landing mid-flight - snaps to the same
+  // wide start pose and re-flies in from there; that snap-then-swing is the
+  // intended "new game" cue, not a bug to smooth over. What a re-entrant call
+  // does NOT do is fight the previous flight: CameraFlight#start fully
+  // replaces the prior _from/_to/_t0 rather than blending with them, so a
+  // superseding New Game is a clean restart, never two flights racing to
+  // write camera.position on the same frame.
+  flyToNewGame(side) {
+    const { from, to } = newGamePose(side);
+    this.cameraFlight.start(to, { duration: CAMERA_NEW_GAME_DURATION, ease: easeOutCubic, from });
   }
 
   // Apply a theme: a gradient sky, plus optional starfield.

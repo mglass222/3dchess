@@ -19,6 +19,13 @@
       #vignette { position: absolute; inset: 0; pointer-events: none;
             background: radial-gradient(ellipse 78% 78% at 50% 48%,
               rgba(0,0,0,0) 42%, rgba(0,0,0,0) 62%, rgba(0,0,0,0.30) 100%); }
+      /* WARNING: do not add `filter`, `opacity < 1`, `transform`, or
+         `will-change` to #app. The UI panel injected by ui.js uses
+         backdrop-filter to read as glass, sampling everything painted
+         beneath it in #app's stacking context - this canvas plus the
+         vignette above. Any of those four properties on #app creates a new
+         containing block/stacking context that breaks that sampling chain,
+         so the panel would stop showing the scene through it. */
     </style>
   </head>
   <body>

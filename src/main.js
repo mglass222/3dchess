@@ -203,6 +203,7 @@ function onSkillChange(skill) {
 function onNewGame(side, skill) {
   if (!booted) return;                       // ignore clicks before models/engine load
   gameId++;                                  // invalidate any in-flight AI search
+  scene.flyToNewGame(side);                  // Tier 3 C1: slow orbit-in; never gates input (see scene.js)
   aiColor = side === 'w' ? 'b' : 'w';
   ai.setSkill(skill);
   if (aiBusy) ai.stop();                     // hurry the stale search so the engine frees
