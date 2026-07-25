@@ -27,30 +27,100 @@ export const BLOOM = { strength: 0.18, radius: 0.35, threshold: 1.30 };
 export const MEASURED_SCENE_LINEAR = { lightSquare: 0.303, darkSquare: 0.053, p95: 0.336 };
 
 // RRTAndODTFit (three's tonemapping_pars_fragment.glsl.js): a = v*(v+0.0245786)
-// - 0.000090537; b = v*(0.983729*v + 0.432951) + 0.238081; return a/b. The
-// ACESInputMat/ACESOutputMat 3x3 matrices that sandwich this in the real shader
-// only rotate between sRGB and ACES AP1 primaries - each is identity on the
-// neutral axis (r === g === b): every row of ACESInputMat sums to 1 (e.g. row 0
-// is 0.59719 + 0.35458 + 0.04823 = 1.0), and likewise for ACESOutputMat. This
-// app never pushes board/marker colors far enough off the neutral axis for that
-// to matter, so a scalar port of RRTAndODTFit reproduces the shader's luminance
-// response exactly, without reconstructing the matrices.
+// - 0.000090537; b = v*(0.983729*v + 0.432951) + 0.238081; return a/b. Applied
+// per-channel, componentwise, by both the scalar neutral-axis path just below
+// (acesFilmicLuminance) and the full vector path further down
+// (acesFilmicToneMapRGB) - GLSL's RRTAndODTFit(vec3) is itself just this same
+// scalar curve applied to each channel, sandwiched between the
+// ACESInputMat/ACESOutputMat rotations in the real shader (see those matrices'
+// comment below).
 function rrtAndOdtFit(x) {
   const a = x * (x + 0.0245786) - 0.000090537;
   const b = x * (0.983729 * x + 0.4329510) + 0.238081;
   return a / b;
 }
 
+// d/dx of rrtAndOdtFit, via the quotient rule. Only needed by the Newton solve
+// in invertAcesFilmicToneMapRGB below - the scalar neutral-axis path has no use
+// for a derivative, since acesFilmicLuminance is inverted by bisection instead.
+function rrtAndOdtFitDerivative(x) {
+  const a = x * (x + 0.0245786) - 0.000090537;
+  const b = x * (0.983729 * x + 0.4329510) + 0.238081;
+  const aPrime = 2 * x + 0.0245786;
+  const bPrime = 2 * 0.983729 * x + 0.4329510;
+  return (aPrime * b - a * bPrime) / (b * b);
+}
+
+// ACESInputMat/ACESOutputMat, transcribed from tonemapping_pars_fragment.glsl.js
+// (node_modules/three/src/renderers/shaders/ShaderChunk/) as row-major 3x3
+// arrays. GLSL's mat3(c0, c1, c2) constructor takes COLUMN vectors, and
+// `mat * v` is a column-major product - so for a GLSL matrix built from column
+// arguments c0/c1/c2, row i of the equivalent row-major matrix is
+// [c0[i], c1[i], c2[i]]. Verified against the shader source directly, not just
+// asserted here.
+//
+// Each ACES_INPUT row sums to 1.0 (row 0: 0.59719 + 0.35458 + 0.04823 = 1.0;
+// same for rows 1 and 2) and each ACES_OUTPUT row sums to ~1.0. That identity
+// is exactly why acesFilmicLuminance (the scalar port of RRTAndODTFit alone,
+// with no matrices) reproduces the real shader exactly on the neutral axis
+// (r === g === b) and ONLY there: for a neutral input (k, k, k), matrix *
+// (k, k, k) = (k * rowSum, k * rowSum, k * rowSum) = (k, k, k) unchanged, so
+// both matrices vanish and only the RRTAndODTFit curve remains. Off the
+// neutral axis the matrices actively mix channels, the identity no longer
+// holds, and a saturated color needs the full vector transform
+// (acesFilmicToneMapRGB) instead - see its comment below for when to reach for
+// which.
+const ACES_INPUT_MAT = [
+  [0.59719, 0.35458, 0.04823],
+  [0.07600, 0.90834, 0.01566],
+  [0.02840, 0.13383, 0.83777],
+];
+const ACES_OUTPUT_MAT = [
+  [1.60475, -0.53108, -0.07367],
+  [-0.10208, 1.10813, -0.00605],
+  [-0.00327, -0.07276, 1.07602],
+];
+
+function applyMat3(mat, v) {
+  return [
+    mat[0][0] * v[0] + mat[0][1] * v[1] + mat[0][2] * v[2],
+    mat[1][0] * v[0] + mat[1][1] * v[1] + mat[1][2] * v[2],
+    mat[2][0] * v[0] + mat[2][1] * v[1] + mat[2][2] * v[2],
+  ];
+}
+
+// Plain 3x3 * 3x3 product (A * B), row-major. Only used to assemble the
+// Jacobian in jacobianAt below.
+function multMat3(a, b) {
+  const result = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  for (let i = 0; i < 3; i++) {
+    for (let j = 0; j < 3; j++) {
+      let sum = 0;
+      for (let k = 0; k < 3; k++) sum += a[i][k] * b[k][j];
+      result[i][j] = sum;
+    }
+  }
+  return result;
+}
+
 function linearToSRGB(c) {
-  const clamped = Math.min(1, Math.max(0, c));
-  return clamped <= 0.0031308
-    ? clamped * 12.92
-    : 1.055 * clamped ** (1 / 2.4) - 0.055;
+  return srgbEncode(Math.min(1, Math.max(0, c)));
+}
+
+// The sRGB OETF with no clamp - linearToSRGB's formula, factored out so
+// invertAcesFilmicToneMapRGB's solved scene-linear values can be encoded back
+// to a hex fraction WITHOUT silently clamping an out-of-[0,1] result, the same
+// way bisectInverse's [0, 4] search range exposes rather than hides a channel
+// that needs more than input=1 to hit its target. Only called with c >= 0
+// (Newton's y is clamped non-negative each step), so the negative-input branch
+// of the real OETF is never exercised and isn't implemented here.
+function srgbEncode(c) {
+  return c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055;
 }
 
 // Inverse of linearToSRGB. Exported (unlike linearToSRGB) because
 // preToneMapCompensate's round trip - and its tests - need to reason about the
-// decode half explicitly; see composerDisplayFromHexFraction below.
+// decode half explicitly.
 export function sRGBToLinear(c) {
   const clamped = Math.min(1, Math.max(0, c));
   return clamped <= 0.04045
@@ -62,6 +132,15 @@ export function sRGBToLinear(c) {
 // exactly (same `toneMappingExposure / 0.6` prescale three's shader applies).
 // Still linear - callers wanting a display-comparable number need the sRGB
 // encode in displayFromSceneLinear below.
+//
+// USE THIS (not acesFilmicToneMapRGB below) whenever all three channels are
+// equal, or the caller only cares about luminance on the neutral axis - the
+// BLOOM threshold reasoning and the board/piece luminance measurements both
+// qualify. It's the same math as the vector path, just without reconstructing
+// the ACES matrices that are identity there anyway (see their comment above).
+// Reach for acesFilmicToneMapRGB instead the moment r, g and b actually differ
+// and the channel-mixing the matrices perform matters - e.g. inverting a
+// saturated theme color in preToneMapCompensate.
 export function acesFilmicLuminance(sceneLinear, exposure = 1) {
   const x = sceneLinear * (exposure / 0.6);
   return Math.min(1, Math.max(0, rrtAndOdtFit(x)));
@@ -75,29 +154,79 @@ export function displayFromSceneLinear(sceneLinear, exposure = 1) {
   return linearToSRGB(acesFilmicLuminance(sceneLinear, exposure));
 }
 
-// A CanvasTexture tagged SRGBColorSpace (src/themes.js's gradient) is uploaded
-// with an sRGB internal format, so the GPU sampler hardware-decodes it to
-// scene-linear on every fetch - the same decode sRGBToLinear performs above.
-// WebGLBackground sets that plane's material.toneMapped = false whenever the
-// background texture's transfer function is SRGB (see three's
-// WebGLBackground.js), so on the direct renderer.render() path the decode and
-// colorspace_fragment's re-encode cancel out exactly: whatever hex is authored
-// is what lands on screen. The composer's RenderPass forces NoToneMapping /
-// LinearSRGBColorSpace while a render target is bound (see createPostProcessing
-// above), so that per-material toneMapped flag never gets consulted - the
-// decoded linear texel is written to the HDR target as-is, and OutputPass later
-// tonemaps and re-encodes the whole buffer, background pixels included. Net
-// effect: composerDisplayed(hex) = displayFromSceneLinear(sRGBToLinear(hex)),
-// one extra decode/tonemap pass the direct path never applies.
-function composerDisplayFromHexFraction(hexFraction, exposure = 1) {
-  return displayFromSceneLinear(sRGBToLinear(hexFraction), exposure);
+// Full vector port of THREE.ACESFilmicToneMapping (tonemapping_pars_fragment.
+// glsl.js): scale by exposure/0.6, rotate into ACES AP1 via ACES_INPUT_MAT,
+// apply the RRTAndODTFit curve to each channel, rotate back via
+// ACES_OUTPUT_MAT, then saturate - exactly `color = ACESFilmicToneMapping(
+// color)` in the real shader, for a general (possibly saturated) linear RGB
+// triple where the matrices no longer cancel to identity. Returns tone-mapped
+// LINEAR RGB, still needing the sRGB encode (linearToSRGB) applied by whatever
+// calls this - see displayFromSceneLinearRGB just below, or
+// acesFilmicLuminance's comment above for when the scalar path suffices
+// instead.
+export function acesFilmicToneMapRGB(rgbLinear, exposure = 1) {
+  const k = exposure / 0.6;
+  const scaled = rgbLinear.map((c) => c * k);
+  const acesIn = applyMat3(ACES_INPUT_MAT, scaled);
+  const fitted = acesIn.map(rrtAndOdtFit);
+  const acesOut = applyMat3(ACES_OUTPUT_MAT, fitted);
+  return acesOut.map((c) => Math.min(1, Math.max(0, c)));
 }
 
-// Monotonic increasing (sRGB decode, ACES tonemap, and sRGB encode all are),
-// so bisection converges to the unique root. Upper bound is generous (not
-// clamped to 1) so a channel that needs to exceed authorable range is exposed
-// as an out-of-[0,1] result rather than silently clamped - see
-// preToneMapCompensate's callers, which are expected to check that themselves.
+// Vector counterpart to displayFromSceneLinear above: ACES-tonemaps all three
+// channels together (so the matrices actually mix them, unlike three
+// independent scalar calls) and sRGB-encodes each result. Exported so tests
+// (and any future caller) can round-trip a compensated color through the same
+// full chain the composer applies, without reimplementing it.
+export function displayFromSceneLinearRGB(rgbLinear, exposure = 1) {
+  return acesFilmicToneMapRGB(rgbLinear, exposure).map((c) => linearToSRGB(c));
+}
+
+// d(acesFilmicToneMapRGB)/d(rgbLinear) at a point, as a row-major 3x3 array -
+// the Jacobian invertAcesFilmicToneMapRGB's Newton solve needs. Chain rule
+// through the same three steps as the forward function: out = ACES_OUTPUT_MAT
+// * fitted, fitted_m = rrtAndOdtFit(u_m), u = k * ACES_INPUT_MAT * rgbLinear.
+// So d(out_i)/d(rgbLinear_j) = sum_m ACES_OUTPUT_MAT[i][m] *
+// rrtAndOdtFitDerivative(u_m) * k * ACES_INPUT_MAT[m][j], i.e.
+// J = ACES_OUTPUT_MAT * diag(rrtAndOdtFitDerivative(u)) * k * ACES_INPUT_MAT.
+// Deliberately NOT clamped the way the forward function's return value is -
+// saturate()'s clamp would zero the derivative outside [0, 1] and break
+// Newton right where a not-yet-converged iterate needs it most.
+function jacobianAt(rgbLinear, exposure) {
+  const k = exposure / 0.6;
+  const scaled = rgbLinear.map((c) => c * k);
+  const u = applyMat3(ACES_INPUT_MAT, scaled);
+  const fPrime = u.map(rrtAndOdtFitDerivative);
+  const scaledInput = ACES_INPUT_MAT.map((row, m) => row.map((v) => v * fPrime[m] * k));
+  return multMat3(ACES_OUTPUT_MAT, scaledInput);
+}
+
+// Solves the 3x3 linear system `matrix * result = vector` via Cramer's rule -
+// small and exact enough for the one-off solve Newton's step needs each
+// iteration, without pulling in a linear-algebra dependency for a single 3x3.
+// Returns null (rather than Infinity/NaN) on a singular matrix so callers can
+// bail out instead of propagating garbage - see invertAcesFilmicToneMapRGB.
+function solve3x3(matrix, vector) {
+  const det3 = (m) => (
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+    - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+    + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+  );
+  const det = det3(matrix);
+  if (Math.abs(det) < 1e-12) return null;
+  return [0, 1, 2].map((col) => {
+    const replaced = matrix.map((row) => row.slice());
+    for (let i = 0; i < 3; i++) replaced[i][col] = vector[i];
+    return det3(replaced) / det;
+  });
+}
+
+// Monotonic increasing (rrtAndOdtFit's curve is), so bisection converges to
+// the unique root. Upper bound is generous (not clamped to 1) so a value that
+// needs to exceed authorable range is exposed as an out-of-[0,1] result rather
+// than silently clamped - see invertAcesFilmicToneMapRGB, which uses this only
+// to seed its Newton solve, and preToneMapCompensate's callers, which are
+// expected to check the final result themselves.
 function bisectInverse(target, forward, exposure) {
   let lo = 0;
   let hi = 4;
@@ -106,6 +235,46 @@ function bisectInverse(target, forward, exposure) {
     if (forward(mid, exposure) < target) lo = mid; else hi = mid;
   }
   return (lo + hi) / 2;
+}
+
+// Inverts acesFilmicToneMapRGB as a vector - not per channel independently -
+// so the ACES matrices' cross-channel mixing (see their comment above) is
+// accounted for rather than approximated away. Seeds each channel from the
+// scalar per-channel bisection against acesFilmicLuminance (already a good
+// approximation, and exact on the neutral axis), then runs Newton's method on
+// the full 3x3 system using the analytic Jacobian from jacobianAt: each step
+// solves `J * delta = forward(sceneLinear) - targetLinear` and moves
+// `sceneLinear -= delta`, clamped non-negative (scene-linear can't be
+// negative). Converged in 1-2 Newton steps for all ten current theme
+// endpoints - quadratic convergence near the root, unlike a naive per-channel
+// multiplicative correction, which this codebase's git history shows
+// oscillating without settling for very dark, unevenly-saturated colors (e.g.
+// cosmos's near-black top). Callers MUST check `converged` themselves rather
+// than assume it - see preToneMapCompensate below, and the tests, which assert
+// it for every theme endpoint.
+export function invertAcesFilmicToneMapRGB(targetLinear, exposure = 1, {
+  maxIterations = 12, tolerance = 1e-5,
+} = {}) {
+  let sceneLinear = targetLinear.map((t) => bisectInverse(t, acesFilmicLuminance, exposure));
+  let residual = Infinity;
+  let iterations = 0;
+
+  for (let i = 0; i <= maxIterations; i++) {
+    const forward = acesFilmicToneMapRGB(sceneLinear, exposure);
+    const error = forward.map((f, k) => f - targetLinear[k]);
+    residual = Math.max(...error.map(Math.abs));
+    iterations = i;
+    if (residual < tolerance || i === maxIterations) break;
+
+    const jacobian = jacobianAt(sceneLinear, exposure);
+    const delta = solve3x3(jacobian, error);
+    if (!delta) break;
+    sceneLinear = sceneLinear.map((c, k) => Math.max(0, c - delta[k]));
+  }
+
+  return {
+    sceneLinear, residual, iterations, converged: residual < tolerance,
+  };
 }
 
 function hexToChannels(hex) {
@@ -119,28 +288,41 @@ function channelsToHex(channels) {
 
 // Pre-compensates a display-space hex color so that, once it is authored into
 // a gradient canvas and rendered through the composer (which tonemaps the
-// background it previously bypassed - see composerDisplayFromHexFraction),
+// background it previously bypassed - see displayFromSceneLinearRGB above),
 // the color the composer actually displays still matches the ORIGINAL hex the
-// direct render path shows unmodified. Per channel, independently: the
-// RRTAndODTFit has no closed-form inverse, and the ACESInputMat/ACESOutputMat
-// matrices this scalar port omits are near-identity on the neutral axis (see
-// rrtAndOdtFit's comment) - close enough off-axis, for the mild, mostly-neutral
-// theme colors here, that per-channel bisection matches what a full 3x3-matrix
-// inversion would give.
+// direct render path shows unmodified. Inverts the real vector ACES transform
+// (invertAcesFilmicToneMapRGB), not a per-channel scalar approximation: the
+// ACESInputMat/ACESOutputMat matrices only cancel to identity on the neutral
+// axis (see the ACES_INPUT_MAT/ACES_OUTPUT_MAT comment above), so a saturated
+// color like dusk's bottom needs the cross-channel mixing accounted for or
+// the compensation drifts.
 //
 // Returns the compensated color as both a hex string and the raw [0,1]
 // fractions per channel - callers (Scene.setTheme via themes.js) should check
 // the fractions stay within [0, 1] themselves rather than trust a silent clamp,
 // since a channel needing more than input=1 to hit its target means that
-// endpoint clips and should be reported, not hidden.
+// endpoint clips and should be reported, not hidden. Throws if the Newton
+// solve fails to converge, since a compensated color this codebase can't
+// verify is worse than a loud failure - see invertAcesFilmicToneMapRGB's
+// comment; this has not happened for any of the current theme endpoints.
 export function preToneMapCompensate(hex, exposure = 1) {
-  const channels = hexToChannels(hex).map((c) => c / 255);
-  const compensated = channels.map(
-    (target) => bisectInverse(target, composerDisplayFromHexFraction, exposure),
-  );
+  const targetDisplay = hexToChannels(hex).map((c) => c / 255);
+  const targetLinear = targetDisplay.map((c) => sRGBToLinear(c));
+  const {
+    sceneLinear, converged, residual, iterations,
+  } = invertAcesFilmicToneMapRGB(targetLinear, exposure);
+
+  if (!converged) {
+    throw new Error(
+      `preToneMapCompensate: Newton solve did not converge for ${hex} `
+      + `(residual ${residual} after ${iterations} iterations)`,
+    );
+  }
+
+  const channels = sceneLinear.map((c) => srgbEncode(c));
   return {
-    hex: channelsToHex(compensated.map((c) => c * 255)),
-    channels: compensated,
+    hex: channelsToHex(channels.map((c) => c * 255)),
+    channels,
   };
 }
 

@@ -5,6 +5,9 @@ import {
   MEASURED_SCENE_LINEAR,
   acesFilmicLuminance,
   displayFromSceneLinear,
+  acesFilmicToneMapRGB,
+  displayFromSceneLinearRGB,
+  invertAcesFilmicToneMapRGB,
   sRGBToLinear,
   preToneMapCompensate,
   chooseSamples,
@@ -39,15 +42,36 @@ describe('postfx', () => {
     expect(BLOOM.threshold).toBeGreaterThanOrEqual(2.5 * MEASURED_SCENE_LINEAR.p95);
   });
 
-  it('preToneMapCompensate round-trips through displayFromSceneLinear (composed with the sRGB decode the composer applies) for every theme endpoint, with every channel in [0,1]', () => {
+  it('acesFilmicToneMapRGB is identity-equivalent to acesFilmicLuminance on the neutral axis (r === g === b), pinning the scalar/vector relationship', () => {
+    // Both are the same RRTAndODTFit curve; acesFilmicToneMapRGB additionally
+    // sandwiches it between ACES_INPUT_MAT/ACES_OUTPUT_MAT, which only reduce
+    // to identity when all three channels match (see the matrices' comment in
+    // postfx.js). Off the neutral axis these diverge - that's the whole point
+    // of the vector path - so this only checks the neutral case. Precision is
+    // 4 decimal places, not tighter, because ACES_OUTPUT_MAT's rows only sum
+    // to ~1.0 (not exactly, per its own comment) at the matrix's published
+    // precision, so the matrices don't cancel to a bit-exact identity.
+    for (const k of [0, 0.053, 0.303, 0.5, 0.9, 2]) {
+      const vector = acesFilmicToneMapRGB([k, k, k]);
+      const scalar = acesFilmicLuminance(k);
+      vector.forEach((c) => expect(c).toBeCloseTo(scalar, 4));
+    }
+  });
+
+  it('preToneMapCompensate round-trips through the full vector forward chain (ACES matrices + sRGB) for every theme endpoint, with every channel in [0,1] and no clipping', () => {
     // The composer decodes the gradient's SRGBColorSpace texture to scene-linear
-    // (sRGBToLinear) before OutputPass tonemaps it (displayFromSceneLinear) -
-    // see preToneMapCompensate's comment in postfx.js. Composing those two is
-    // exactly what should undo the compensation and land back on the original
-    // hex's display fraction.
+    // (sRGBToLinear) before OutputPass tonemaps all three channels together
+    // (displayFromSceneLinearRGB) - see preToneMapCompensate's comment in
+    // postfx.js. Composing those is exactly what should undo the compensation
+    // and land back on the original hex's display fraction, within 1/255 per
+    // channel. Using the VECTOR forward here (not three independent scalar
+    // calls) is the point: it's the only way to prove the compensation is
+    // exact off the neutral axis, where the ACES matrices actually mix
+    // channels.
     const endpoints = THEMES.flatMap((t) => [t.top, t.bottom]);
     expect(endpoints.length).toBeGreaterThanOrEqual(10);
 
+    const clipped = [];
     for (const hex of endpoints) {
       const { channels } = preToneMapCompensate(hex);
       const originalChannels = [
@@ -56,11 +80,42 @@ describe('postfx', () => {
         parseInt(hex.slice(1), 16) & 255,
       ].map((c) => c / 255);
 
+      if (channels.some((c) => c < 0 || c > 1)) clipped.push(hex);
+
       channels.forEach((c, i) => {
         expect(c).toBeGreaterThanOrEqual(0);
         expect(c).toBeLessThanOrEqual(1);
-        expect(displayFromSceneLinear(sRGBToLinear(c))).toBeCloseTo(originalChannels[i], 2);
       });
+
+      const displayed = displayFromSceneLinearRGB(channels.map((c) => sRGBToLinear(c)));
+      displayed.forEach((d, i) => {
+        expect(Math.abs(d - originalChannels[i]) * 255).toBeLessThanOrEqual(1);
+      });
+    }
+
+    expect(clipped, `endpoints that clipped: ${clipped.join(', ') || 'none'}`).toEqual([]);
+  });
+
+  it('invertAcesFilmicToneMapRGB converges (residual below tolerance) for every theme endpoint', () => {
+    // preToneMapCompensate would throw on a non-convergent solve (see its
+    // comment in postfx.js) - this makes that guarantee explicit and checks
+    // the actual residual/iteration count instead of just "didn't throw".
+    const endpoints = THEMES.flatMap((t) => [t.top, t.bottom]);
+    for (const hex of endpoints) {
+      const targetDisplay = [
+        (parseInt(hex.slice(1), 16) >> 16) & 255,
+        (parseInt(hex.slice(1), 16) >> 8) & 255,
+        parseInt(hex.slice(1), 16) & 255,
+      ].map((c) => c / 255);
+      const targetLinear = targetDisplay.map((c) => sRGBToLinear(c));
+
+      const {
+        residual, iterations, converged,
+      } = invertAcesFilmicToneMapRGB(targetLinear);
+
+      expect(converged, `${hex} failed to converge (residual ${residual} after ${iterations} iterations)`).toBe(true);
+      expect(residual).toBeLessThan(1e-5);
+      expect(iterations).toBeLessThanOrEqual(12);
     }
   });
 
