@@ -64,31 +64,40 @@ function createTextureCanvas(data, size) {
 const TAU = Math.PI * 2;
 
 function createWoodTexture(baseHex, grainHex, seed) {
-  const size = 192;
+  const size = 256; // was 192; the pieces are inspectable close enough to see texels
   const data = new Uint8Array(size * size * 4);
   const base = colorParts(baseHex);
   const grain = colorParts(grainHex);
 
   // Frequencies expressed as whole cycles per texture so the map actually tiles
   // (a non-integer period never divides `size`, leaving a seam once contrast lands).
-  const kFigureX = (TAU * 6) / size;
-  const kFigureY = (TAU * 2) / size;
-  const kFineX = (TAU * 20) / size;
-  const kFineY = (TAU * 1) / size;
-  const kPoreX = (TAU * 61) / size; // prime-ish cycle count avoids beating with the figure
-  const kPoreY = (TAU * 3) / size;
+  const kFigureX = (TAU * 5) / size;
+  const kWanderY = (TAU * 2) / size;
+  const kFineX = (TAU * 14) / size;
+  const kPoreX = (TAU * 34) / size;
 
   for (let y = 0; y < size; y++) {
+    // ONE horizontal drift, shared by every layer. Texture x maps to arc length
+    // around the piece and y to height, so any layer that drifts at its own rate
+    // crosses the others, and that interference reads as woven fabric or
+    // herringbone rather than wood. The previous version drifted the figure at 2
+    // cycles and the pores at 3, which is exactly what produced the chevrons.
+    // Physically this is also the right coupling: pores run ALONG the grain.
+    const wander = Math.sin(y * kWanderY + seed) * 1.1;
+
     for (let x = 0; x < size; x++) {
-      const vertical = Math.sin(x * kFigureX + Math.sin(y * kFigureY + seed) * 2.1 + seed);
-      const fine = Math.sin(x * kFineX + y * kFineY + seed * 2.4);
-      const band = Math.max(0, Math.min(1, 0.5 + vertical * 0.36 + fine * 0.13));
+      const figure = Math.sin(x * kFigureX + wander + seed);
+      // No y term. Grain on a lathe-turned piece runs axially; a y slope here
+      // shears the stripes into the diagonal crosshatch this used to have.
+      const fine = Math.sin(x * kFineX + wander * 0.6 + seed * 2.4);
+      const band = Math.max(0, Math.min(1, 0.5 + figure * 0.34 + fine * 0.07));
       const color = blendColor(base, grain, band);
 
-      // Multiplicative pore term so pores read as depth rather than a second colour;
-      // the **6 keeps the lines thin instead of a sine wash.
-      const pore = Math.max(0, Math.sin(x * kPoreX + Math.sin(y * kPoreY + seed) * 1.4));
-      const shade = 1 - pore ** 6 * 0.24;
+      // Multiplicative so pores read as depth rather than a second colour. Much
+      // softer than before (**4 at 0.10, was **6 at 0.24 over 61 cycles): high
+      // frequency plus a hard exponent made them read as stitching, not pores.
+      const pore = Math.max(0, Math.sin(x * kPoreX + wander + seed * 1.5));
+      const shade = 1 - pore ** 4 * 0.10;
 
       const i = (y * size + x) * 4;
       data[i] = Math.round(color.r * shade);
