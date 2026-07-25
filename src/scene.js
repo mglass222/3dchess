@@ -486,6 +486,19 @@ export class Scene {
     // up inside _addEnvironment via setPieceEnvironmentMap), the board group
     // doesn't exist yet when _addEnvironment runs.
     if (this._envTexture) applyEnvironmentMap(this.scene, this._envTexture);
+
+    // Must run before setTheme below: setTheme's compensate flag reads
+    // !!this.post, and this is the ONLY assignment of this.post - if it ran
+    // after setTheme, the initial gradient would always render uncompensated
+    // even once the composer exists (createPostProcessing needs only
+    // renderer/scene/camera, all already constructed, so moving it earlier
+    // is otherwise a no-op: it doesn't depend on pickPlane/markers below, and
+    // RenderPass holds a live reference to `this.scene`, so pieces/markers
+    // added later still render through it). Returns null (falling back to
+    // renderer.render in _render below) when the GPU/context lacks what
+    // UnrealBloomPass's HDR target needs - the same fallback philosophy as
+    // _addEnvironment/_envFailed above.
+    this.post = createPostProcessing({ renderer: this.renderer, scene: this.scene, camera: this.camera });
     this.setTheme(DEFAULT_THEME);
 
     // Invisible plane at the board top for raycasting empty squares.
@@ -500,11 +513,6 @@ export class Scene {
     this._pointer = new THREE.Vector2();
 
     this.markers = new MarkerLayer(this.scene);
-
-    // Returns null (falling back to renderer.render in _render below) when the
-    // GPU/context lacks what UnrealBloomPass's HDR target needs - the same
-    // fallback philosophy as _addEnvironment/_envFailed above.
-    this.post = createPostProcessing({ renderer: this.renderer, scene: this.scene, camera: this.camera });
 
     window.addEventListener('resize', () => this._resize());
     this._resize();
@@ -890,7 +898,10 @@ export class Scene {
     const theme = getTheme(key);
     this._clearBackdrop();
 
-    this._bgTexture = makeGradientTexture(theme.top, theme.bottom);
+    // Only compensate when the composer is actually in the pipeline - see
+    // makeGradientTexture's comment for why doing this unconditionally would
+    // double-correct the fallback (post === null) path.
+    this._bgTexture = makeGradientTexture(theme.top, theme.bottom, { compensate: !!this.post });
     this.scene.background = this._bgTexture;
     applyThemeFog(this._fog, theme);
     if (theme.stars) {

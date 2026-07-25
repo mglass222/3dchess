@@ -1,7 +1,32 @@
 import { describe, it, expect } from 'vitest';
 import {
-  THEMES, DEFAULT_THEME, getTheme, makeStarfield,
+  THEMES, DEFAULT_THEME, getTheme, makeStarfield, makeGradientTexture,
 } from '../src/themes.js';
+import { preToneMapCompensate } from '../src/postfx.js';
+
+// makeGradientTexture needs a canvas; stub the minimum (same pattern as
+// scene.test.js's fog test), capturing the color stops it feeds the gradient.
+function withStubbedCanvas(run) {
+  const originalDocument = globalThis.document;
+  const stops = [];
+  globalThis.document = {
+    createElement: () => ({
+      width: 0,
+      height: 0,
+      getContext: () => ({
+        createLinearGradient: () => ({ addColorStop: (offset, color) => stops.push([offset, color]) }),
+        fillStyle: null,
+        fillRect() {},
+      }),
+    }),
+  };
+  try {
+    run();
+    return stops;
+  } finally {
+    globalThis.document = originalDocument;
+  }
+}
 
 describe('themes', () => {
   it('defines several themes with gradient colors', () => {
@@ -31,6 +56,25 @@ describe('themes', () => {
     // The shell sits at a large radius, so fogging it would gut the Cosmos theme.
     expect(makeStarfield(10).material.fog).toBe(false);
   });
+  it('makeGradientTexture passes colors through unchanged without compensate', () => {
+    const theme = getTheme('midnight');
+    const stops = withStubbedCanvas(() => makeGradientTexture(theme.top, theme.bottom));
+    expect(stops).toEqual([[0, theme.top], [1, theme.bottom]]);
+  });
+
+  it('makeGradientTexture passes the compensate flag through to preToneMapCompensate', () => {
+    const theme = getTheme('midnight');
+    const stops = withStubbedCanvas(() => makeGradientTexture(theme.top, theme.bottom, { compensate: true }));
+    expect(stops).toEqual([
+      [0, preToneMapCompensate(theme.top).hex],
+      [1, preToneMapCompensate(theme.bottom).hex],
+    ]);
+    // And it must actually differ from the uncompensated colors - otherwise
+    // this test would pass even if the flag were silently ignored.
+    expect(stops[0][1]).not.toBe(theme.top);
+    expect(stops[1][1]).not.toBe(theme.bottom);
+  });
+
   it('does not include the retired place themes', () => {
     const keys = THEMES.map((theme) => theme.key);
     for (const key of ['egypt', 'paris', 'london', 'rome', 'newyork']) {

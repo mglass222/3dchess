@@ -5,10 +5,13 @@ import {
   MEASURED_SCENE_LINEAR,
   acesFilmicLuminance,
   displayFromSceneLinear,
+  sRGBToLinear,
+  preToneMapCompensate,
   chooseSamples,
   postProcessingSupported,
   createPostProcessing,
 } from '../src/postfx.js';
+import { THEMES } from '../src/themes.js';
 
 describe('postfx', () => {
   it('ports the ACES tonemap accurately enough to reproduce the Tier-1 browser measurements', () => {
@@ -34,6 +37,40 @@ describe('postfx', () => {
     // the executable version of "only genuine speculars bloom; the board can't."
     expect(displayFromSceneLinear(BLOOM.threshold)).toBeGreaterThanOrEqual(0.87);
     expect(BLOOM.threshold).toBeGreaterThanOrEqual(2.5 * MEASURED_SCENE_LINEAR.p95);
+  });
+
+  it('preToneMapCompensate round-trips through displayFromSceneLinear (composed with the sRGB decode the composer applies) for every theme endpoint, with every channel in [0,1]', () => {
+    // The composer decodes the gradient's SRGBColorSpace texture to scene-linear
+    // (sRGBToLinear) before OutputPass tonemaps it (displayFromSceneLinear) -
+    // see preToneMapCompensate's comment in postfx.js. Composing those two is
+    // exactly what should undo the compensation and land back on the original
+    // hex's display fraction.
+    const endpoints = THEMES.flatMap((t) => [t.top, t.bottom]);
+    expect(endpoints.length).toBeGreaterThanOrEqual(10);
+
+    for (const hex of endpoints) {
+      const { channels } = preToneMapCompensate(hex);
+      const originalChannels = [
+        (parseInt(hex.slice(1), 16) >> 16) & 255,
+        (parseInt(hex.slice(1), 16) >> 8) & 255,
+        parseInt(hex.slice(1), 16) & 255,
+      ].map((c) => c / 255);
+
+      channels.forEach((c, i) => {
+        expect(c).toBeGreaterThanOrEqual(0);
+        expect(c).toBeLessThanOrEqual(1);
+        expect(displayFromSceneLinear(sRGBToLinear(c))).toBeCloseTo(originalChannels[i], 2);
+      });
+    }
+  });
+
+  it('preToneMapCompensate brightens a dark theme color (crushed by the tonemap, so it needs boosting to compensate)', () => {
+    const { hex, channels } = preToneMapCompensate('#232a3d'); // midnight's bottom
+    channels.forEach((c, i) => {
+      const original = [0x23, 0x2a, 0x3d][i] / 255;
+      expect(c).toBeGreaterThan(original);
+    });
+    expect(hex).toMatch(/^#[0-9a-f]{6}$/);
   });
 
   it('chooseSamples steps down MSAA at its two boundaries', () => {

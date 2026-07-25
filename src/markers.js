@@ -44,7 +44,23 @@ export const MARKER_KINDS = {
 export const MARKER_SLOTS = ['lastMove', 'check', 'selected', 'targets'];
 
 export const CHECK_PULSE_PERIOD = 1100; // ms, full cycle
-export const CHECK_OPACITY = [0.16, 0.46];
+// Was [0.16, 0.46]. Re-measured lower for two compounding reasons:
+// 1. Composer-vs-direct blending-space shift (see createMaterials' comment) -
+//    at the old 0.16 rest value, a dark square (d8) over-delivered contrast
+//    by +0.084 against the direct-path reference; 0.05 matches within +/-0.01
+//    on both a light and a dark square.
+// 2. This material's color is now boosted above 1.0 (see createMaterials
+//    below) so check can bloom - a color-only change, but the RRTAndODTFit
+//    tonemap responds to color magnitude, not just alpha, so the SAME
+//    opacity now reads brighter than it used to independent of blending
+//    space. The peak (was 0.46) is deliberately NOT contrast-matched to the
+//    direct path the way the rest value is: 0.28 was chosen by eye, on both
+//    paths, as the value where the composer path's bloom halo reads as an
+//    intentional glow rather than a blown-out disc, while the direct
+//    (fallback) path still shows a clearly visible, correctly-tinted ring
+//    (see FIX 4's comment on the check/capture materials for why the
+//    composer path is EXPECTED to look more dramatic here, not matched).
+export const CHECK_OPACITY = [0.05, 0.28];
 
 function createGeometries() {
   return {
@@ -58,23 +74,80 @@ function createGeometries() {
 
 // All MeshBasicMaterial, transparent, double-sided, depthWrite:false (see the
 // layering comment above for why), depthTest left at its default true.
+//
+// Opacities below are NOT the pre-composer numbers: EffectComposer moved
+// alpha blending from display space (direct renderer.render) into linear
+// space (the composer's HDR scene pass, blended pre-tonemap), which changes
+// how much a translucent marker's color reads against the board underneath
+// it - and unlike the black contact-shadow decal in pieces.js, these are
+// saturated colors on both light AND dark squares, so the shift isn't a
+// single uniform factor. Each was re-measured with the method in
+// docs/visual-review.md's follow-up pass: select/target/lastMove/check
+// markers raised via window.__chess.input.onSquarePicked (and
+// Scene.setLastMove/setCheck for the other two), sampled at the marker
+// centre against the same square with the marker cleared, A/B'd across
+// scene.post on both a light and a dark square, comparing composer contrast
+// to the direct-path reference:
+//   move      0.55 -> 0.34  (composer over-delivered contrast on dark squares
+//                             by up to 37% at the old value; light squares
+//                             needed far less correction - 0.34 is the
+//                             minimax compromise, light squares land ~0.018
+//                             under target, dark squares ~0.011 over)
+//   capture   0.80 -> unchanged (was within +/-0.006 on a light square before
+//                             the above-1.0 bloom color below; with it, the
+//                             composer path runs about 0.025 hotter than
+//                             direct, which is the bloom glow working as
+//                             intended, not a miscalibration - see the bloom
+//                             comment on the capture material below)
+//   selected  0.85 -> unchanged (within +/-0.008 on both a light and a dark
+//                             square - high-opacity markers sit close to
+//                             the alpha=1 limit where blending-space
+//                             doesn't matter)
+//   lastMove  0.16 -> 0.07   (light squares were already close; dark squares
+//                             over-delivered by ~0.09-0.12 contrast at 0.16,
+//                             matched to within +/-0.02 at 0.07)
+//   check     see CHECK_OPACITY below (measured against the bloomed color -
+//                             see the comment there)
 function createMaterials() {
   return {
     move: new THREE.MeshBasicMaterial({
-      color: 0x49e0a0, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false,
+      color: 0x49e0a0, transparent: true, opacity: 0.34, side: THREE.DoubleSide, depthWrite: false,
     }),
-    capture: new THREE.MeshBasicMaterial({
-      color: 0xe0574a, transparent: true, opacity: 0.80, side: THREE.DoubleSide, depthWrite: false,
-    }),
+    // Above-1.0 linear RGB (Color.setRGB, not the `color:` hex option, which
+    // clamps to [0,1] sRGB): with the composer's HalfFloat linear buffer this
+    // exceeds BLOOM.threshold (1.30 scene-linear - see postfx.js), so capture
+    // is one of exactly two things in the scene that bloom (see check below),
+    // a deliberate diegetic glow on a capture opportunity. Milder than
+    // check's boost - it fires far more often (any capturable square) and
+    // shouldn't out-glow the check pulse. Degrades to a flat saturated red on
+    // the no-composer fallback (values >1 simply clip) - acceptable per the
+    // fallback philosophy elsewhere in this file (see the layering comment).
+    capture: (() => {
+      const material = new THREE.MeshBasicMaterial({
+        transparent: true, opacity: 0.80, side: THREE.DoubleSide, depthWrite: false,
+      });
+      // 2.1, not the 1.35 first tried: the threshold had to be raised to 1.30
+      // to stop the white pieces blooming, which left 1.35 only marginally
+      // over the line and the glow barely visible. Judge this against the
+      // threshold, not in isolation.
+      material.color.setRGB(2.1, 0.30, 0.26);
+      return material;
+    })(),
     selected: new THREE.MeshBasicMaterial({
       color: 0x49e0a0, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false,
     }),
     lastMove: new THREE.MeshBasicMaterial({
-      color: 0xf2d98c, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false,
+      color: 0xf2d98c, transparent: true, opacity: 0.07, side: THREE.DoubleSide, depthWrite: false,
     }),
-    check: new THREE.MeshBasicMaterial({
-      color: 0xff4b3e, transparent: true, opacity: CHECK_OPACITY[0], side: THREE.DoubleSide, depthWrite: false,
-    }),
+    // Above-1.0 linear RGB - see capture's comment for the mechanism. Check
+    // is the rarer, more dramatic event, so it gets the stronger glow.
+    check: (() => {
+      const material = new THREE.MeshBasicMaterial({
+        transparent: true, opacity: CHECK_OPACITY[0], side: THREE.DoubleSide, depthWrite: false,
+      });
+      material.color.setRGB(2.4, 0.45, 0.34);
+      return material;
+    })(),
   };
 }
 

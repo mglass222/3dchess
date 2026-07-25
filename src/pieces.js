@@ -252,11 +252,37 @@ function createContactShadowAlphaTexture() {
 // MeshBasicMaterial is not isMeshStandardMaterial, so it is deliberately immune
 // to the environment map: the blob keeps a fixed density regardless of IBL.
 // depthWrite: false stops the decal punching a hole in the depth buffer.
+//
+// 0.66, not the 0.42 this used to be: EffectComposer moved alpha blending from
+// display space (direct renderer.render) into linear space (the composer's HDR
+// scene pass), and blending a black, transparent decal over the board reads
+// darker per unit opacity in display space than in linear space. Isolating the
+// decal (board alone vs. board+decal, at the default orbit) measured how much
+// darkening each path actually produces:
+//   direct:   112.3 -> 84.0  (removes 25.2% of the board's luminance)
+//   composer: 113.5 -> 96.9  (removes 14.6% at the OLD 0.42 opacity)
+// A composer sweep (0.42 -> 14.6%, 0.62 -> 23.3%, 0.72 -> 28.3%) interpolates to
+// 0.66 for the 25.2% direct-path target. Do not "restore" this to 0.42 - that
+// number was calibrated for the direct-render path this app no longer uses by
+// default.
+//
+// 0.66 restores the AVERAGE exactly but deliberately not the per-square split.
+// Measured over c2/e2 (light) and d2/f2 (dark):
+//   direct   @0.42:  all 0.252, light 0.254, dark 0.246   (near-uniform)
+//   composer @0.66:  all 0.252, light 0.218, dark 0.358   (proportional)
+// No single opacity can match both, and that is not a defect to tune away.
+// Display-space blending removed a roughly constant fraction of the displayed
+// value regardless of what it sat on; linear-space blending is a multiply on
+// scene-linear light, so it removes a constant fraction of the ACTUAL light -
+// which, after ACES, shows up as more darkening on an already-dark square.
+// The linear behaviour is the physically correct one: a shadow attenuates
+// light multiplicatively. The old uniformity was the artifact. So match the
+// average and let the darks go deeper.
 const CONTACT_SHADOW_MATERIAL = new THREE.MeshBasicMaterial({
   color: 0x000000,
   alphaMap: createContactShadowAlphaTexture(),
   transparent: true,
-  opacity: 0.42,
+  opacity: 0.66,
   depthWrite: false,
 });
 

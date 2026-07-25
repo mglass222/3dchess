@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { preToneMapCompensate } from './postfx.js';
 
 // Self-contained gradient backgrounds. Cosmos also adds a procedural starfield.
 // `fog` is authored explicitly (~70% of `bottom`) rather than derived from it:
@@ -22,14 +23,26 @@ export function getTheme(key) {
 }
 
 // Vertical-gradient texture for scene.background (browser-only: uses a canvas).
-export function makeGradientTexture(topColor, bottomColor) {
+//
+// `compensate` pre-corrects top/bottom for the composer's OutputPass, which
+// ACES-tonemaps this texture's decoded-linear texels along with the rest of
+// the HDR buffer (see preToneMapCompensate in postfx.js for why) - something
+// the direct renderer.render() fallback path never does, because
+// WebGLBackground flags this material toneMapped:false for an SRGBColorSpace
+// texture. Passing `compensate: true` on the fallback path would therefore
+// double-correct a color the render never tonemaps in the first place and
+// wash the gradient out - callers MUST gate this on whether a composer is
+// actually in the pipeline (Scene.setTheme passes `!!this.post`).
+export function makeGradientTexture(topColor, bottomColor, { compensate = false } = {}) {
+  const top = compensate ? preToneMapCompensate(topColor).hex : topColor;
+  const bottom = compensate ? preToneMapCompensate(bottomColor).hex : bottomColor;
   const canvas = document.createElement('canvas');
   canvas.width = 16;
   canvas.height = 512;
   const ctx = canvas.getContext('2d');
   const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  grad.addColorStop(0, topColor);
-  grad.addColorStop(1, bottomColor);
+  grad.addColorStop(0, top);
+  grad.addColorStop(1, bottom);
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   const tex = new THREE.CanvasTexture(canvas);
