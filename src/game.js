@@ -73,6 +73,13 @@ export class Game {
     return this.chess.fen();
   }
 
+  // SAN move list from the start of the game (chess.js's own re-derivation),
+  // so a board rebuild can re-derive the move list the same way
+  // syncBoardFromGame re-derives the pieces.
+  history() {
+    return this.chess.history();
+  }
+
   isCheck() { return this.chess.isCheck(); }
   isCheckmate() { return this.chess.isCheckmate(); }
   isStalemate() { return this.chess.isStalemate(); }
@@ -95,6 +102,13 @@ export class Game {
       castle: null,
       promotion: m.promotion ?? null,
       fenAfter: m.after,
+      san: m.san,
+      // FEN's fullmove field increments after Black moves, not after White's,
+      // so it already counts "the move number Black just finished" one too
+      // high from White's perspective — subtract 1 for Black to get the ply
+      // pair's shared move number. Verified against chess.js 1.4.0 directly:
+      // White's move N leaves fullmove==N; Black's move N leaves fullmove==N+1.
+      moveNumber: Number(m.after.split(' ')[5]) - (m.color === 'b' ? 1 : 0),
     };
 
     if (m.flags.includes('e')) {

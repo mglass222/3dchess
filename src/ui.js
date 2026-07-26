@@ -1,5 +1,6 @@
 import { DEFAULT_THEME, THEMES } from './themes.js';
 import { PIECE_SETS } from './pieces.js';
+import { materialAdvantage, formatAdvantage } from './material.js';
 
 // Status string derived purely from game state (unit-tested).
 export function statusText(game) {
@@ -11,6 +12,33 @@ export function statusText(game) {
   if (game.isDraw()) return 'Draw';
   const side = game.turn() === 'w' ? 'White' : 'Black';
   return game.isCheck() ? `${side} to move — check` : `${side} to move`;
+}
+
+// Pairs a flat SAN list into { n, white, black } rows (a trailing White move
+// with no reply yet gets black:null). Pure and DOM-free so it's testable
+// under node; createUI's move-list rendering is just this plus DOM plumbing.
+export function formatMoveList(sanArray) {
+  const rows = [];
+  for (let i = 0; i < sanArray.length; i += 2) {
+    rows.push({ n: i / 2 + 1, white: sanArray[i] ?? null, black: sanArray[i + 1] ?? null });
+  }
+  return rows;
+}
+
+// Ascending value order, matching how a physical captured-piece tray is read.
+const CAPTURE_TYPES = ['p', 'n', 'b', 'r', 'q'];
+const CAPTURE_NOUN = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen' };
+
+// "2 pawns, a knight" / "nothing" — feeds both the glyph row and its
+// aria-label, so the two can never drift out of sync.
+function describeCaptured(map) {
+  const parts = [];
+  for (const t of CAPTURE_TYPES) {
+    const n = map?.[t] ?? 0;
+    if (n <= 0) continue;
+    parts.push(n === 1 ? `a ${CAPTURE_NOUN[t]}` : `${n} ${CAPTURE_NOUN[t]}s`);
+  }
+  return parts.length ? parts.join(', ') : 'nothing';
 }
 
 // Builds the HTML overlay and returns handles the app uses to drive it.
@@ -38,7 +66,17 @@ export function createUI(container, handlers) {
          #vignette in index.html: #app must never gain filter / opacity<1 /
          transform / will-change, or it becomes a containing block and the
          backdrop-filter sampling chain below the panel breaks. */
-      #panel { display:flex; flex-wrap:wrap; gap:10px 14px; align-items:center;
+      /* Column layout: the controls row on top, the tray/move-list "extras"
+         stacked below. This (not a flex-basis:100% child inside a single row
+         container) is deliberate: a percentage flex-basis resolves against
+         the flex container's own box, and #panel's box is itself shrink-to-
+         fit (no explicit width) - so a 100%-basis child can blow that sizing
+         pass up to the width of the nearest ancestor with a definite width,
+         which here is the viewport-wide #ui. Stacking as separate rows avoids
+         the percentage entirely, so #panel's width stays driven by its
+         widest actual content (the controls row, or the capped-width
+         move-list/tray below) instead of ballooning into a full-width bar. */
+      #panel { display:flex; flex-direction:column; align-items:flex-start; gap:10px;
             padding:10px 14px; border-radius:16px;
             background: rgba(18,22,30,0.55);
             backdrop-filter: blur(14px) saturate(120%);
@@ -51,6 +89,7 @@ export function createUI(container, handlers) {
       @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
         #panel { background: rgba(18,22,30,0.88); }
       }
+      #panel .controls-row { display:flex; flex-wrap:wrap; gap:10px 14px; align-items:center; }
 
       #panel label { display:inline-flex; gap:7px; align-items:center; min-width:0; }
       #panel button, #panel select { background:rgba(255,255,255,0.08); color:#e9edf5;
@@ -67,6 +106,28 @@ export function createUI(container, handlers) {
          appearance:none plus a drawn caret. The native popup keeps following
          :root { color-scheme: dark } (see index.html) so it renders dark,
          not a flashing white system dropdown. */
+      /* Captured tray + move list. A plain second row in #panel's column
+         stack (see #panel's own comment above for why this isn't a
+         flex-basis:100% child of a row container) - it stays bounded by the
+         move-list's own max-height/max-width rather than stretching the
+         card, which is the whole point of keeping #panel compact: backdrop-
+         filter cost scales with the sampled area. */
+      #panel .extras { display:flex; flex-direction:column; gap:6px; align-items:flex-start; }
+      #panel .tray-row { display:flex; align-items:center; gap:8px; font-size:15px; line-height:1; }
+      #panel .tray { min-height:1.3em; }
+      #panel .tray .glyphs { letter-spacing:1px; }
+      #panel .tray .glyphs.w { color:#f4ecd8; } /* same pale tone as the white promotion glyphs */
+      #panel .tray .glyphs.b { color:#8fbdf0; } /* same blue as the black promotion glyphs */
+      #panel .adv { font-weight:600; min-width:2.4em; text-align:center; }
+      #panel .movelist { list-style:none; margin:0; padding:4px 6px; max-height:110px;
+            max-width:220px; overflow-y:auto; border-radius:8px;
+            background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+            font-variant-numeric:tabular-nums; }
+      #panel .movelist:focus-visible { outline:2px solid #7fb0ff; outline-offset:-2px; }
+      #panel .movelist li { display:flex; gap:6px; padding:1px 2px; }
+      #panel .movelist .mv-n { opacity:.6; min-width:1.6em; }
+      #panel .movelist .mv-w, #panel .movelist .mv-b { flex:1; min-width:3.2em; }
+
       #panel select { appearance:none; -webkit-appearance:none; max-width:180px;
             padding-right:26px;
             background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0 L5 6 L10 0' fill='none' stroke='%23c9d4e6' stroke-width='1.5'/></svg>");
@@ -94,7 +155,8 @@ export function createUI(container, handlers) {
 
       @media (max-width: 640px) {
         #ui { padding:10px; }
-        #panel { padding:8px 10px; gap:8px 10px; font-size:13px; align-items:flex-start; }
+        #panel { padding:8px 10px; gap:8px; font-size:13px; align-items:flex-start; }
+        #panel .controls-row { gap:8px 10px; }
         #panel button, #panel select { padding:6px 9px; }
         #skill { width:96px; }
         #theme { max-width:132px; }
@@ -117,21 +179,31 @@ export function createUI(container, handlers) {
             background:rgba(255,255,255,0.08); }
     </style>
     <div id="panel">
-      <button id="newgame">New Game</button>
-      <label>Play
-        <select id="side"><option value="w">White</option><option value="b">Black</option></select>
-      </label>
-      <label>Difficulty
-        <input id="skill" type="range" min="0" max="20" value="5" aria-label="Difficulty" />
-        <output id="skillval" for="skill">5</output>
-      </label>
-      <label>Theme
-        <select id="theme"></select>
-      </label>
-      <label>Pieces
-        <select id="pieceset"></select>
-      </label>
-      <span class="status" id="status" role="status" aria-live="polite">White to move</span>
+      <div class="controls-row">
+        <button id="newgame">New Game</button>
+        <label>Play
+          <select id="side"><option value="w">White</option><option value="b">Black</option></select>
+        </label>
+        <label>Difficulty
+          <input id="skill" type="range" min="0" max="20" value="5" aria-label="Difficulty" />
+          <output id="skillval" for="skill">5</output>
+        </label>
+        <label>Theme
+          <select id="theme"></select>
+        </label>
+        <label>Pieces
+          <select id="pieceset"></select>
+        </label>
+        <span class="status" id="status" role="status" aria-live="polite">White to move</span>
+      </div>
+      <div class="extras">
+        <div class="tray-row">
+          <div class="tray" id="trayW" aria-label="White captured: nothing"><span class="glyphs w" aria-hidden="true"></span></div>
+          <span class="adv" id="advantage"></span>
+          <div class="tray" id="trayB" aria-label="Black captured: nothing"><span class="glyphs b" aria-hidden="true"></span></div>
+        </div>
+        <ol class="movelist" id="movelist" tabindex="0" aria-label="Move list" aria-live="off"></ol>
+      </div>
     </div>
   `;
   container.appendChild(root);
@@ -154,6 +226,14 @@ export function createUI(container, handlers) {
   const sideEl = root.querySelector('#side');
   const themeEl = root.querySelector('#theme');
   const pieceSetEl = root.querySelector('#pieceset');
+  const trayWEl = root.querySelector('#trayW');
+  const trayBEl = root.querySelector('#trayB');
+  const advantageEl = root.querySelector('#advantage');
+  const movelistEl = root.querySelector('#movelist');
+  // pushMove appends to this rather than re-deriving from a Game, so createUI
+  // stays framework-free; setHistory (called on any board resync) replaces it
+  // wholesale, keeping the two paths from ever disagreeing after a resync.
+  let historySan = [];
   for (const t of THEMES) {
     const opt = document.createElement('option');
     opt.value = t.key;
@@ -179,10 +259,60 @@ export function createUI(container, handlers) {
 
   const GLYPH = { q: '♛', r: '♜', b: '♝', n: '♞' };
   const PROMO_LABEL = { q: 'Promote to queen', r: 'Promote to rook', b: 'Promote to bishop', n: 'Promote to knight' };
+  const TRAY_GLYPH = { p: '♟', n: '♞', b: '♝', r: '♜', q: '♛' };
+
+  function renderTraySide(el, map, label) {
+    el.setAttribute('aria-label', `${label}: ${describeCaptured(map)}`);
+    let glyphs = '';
+    for (const t of CAPTURE_TYPES) glyphs += TRAY_GLYPH[t].repeat(map?.[t] ?? 0);
+    el.querySelector('.glyphs').textContent = glyphs;
+  }
+
+  function renderMoveList() {
+    movelistEl.innerHTML = '';
+    for (const row of formatMoveList(historySan)) {
+      const li = document.createElement('li');
+      const n = document.createElement('span');
+      n.className = 'mv-n';
+      n.textContent = `${row.n}.`;
+      const white = document.createElement('span');
+      white.className = 'mv-w';
+      white.textContent = row.white ?? '';
+      const black = document.createElement('span');
+      black.className = 'mv-b';
+      black.textContent = row.black ?? '';
+      li.append(n, white, black);
+      movelistEl.appendChild(li);
+    }
+    // Keep the newest plies in view rather than scrolled off past the fixed height.
+    movelistEl.scrollTop = movelistEl.scrollHeight;
+  }
 
   return {
     setStatus(text) { statusEl.textContent = text; },
     setThinking(on) { statusEl.classList.toggle('thinking', on); if (on) statusEl.textContent = 'Computer is thinking…'; },
+    // Wholesale replace: the one path a board resync (New Game, piece-set
+    // switch, the dev loadFen hook) uses to re-derive the move list, mirroring
+    // how syncBoardFromGame re-derives the pieces rather than replaying moves.
+    setHistory(sanArray) {
+      historySan = sanArray.slice();
+      renderMoveList();
+    },
+    // Incremental: called from onMove with the just-applied change-set, before
+    // any await, so it can never be stale relative to game state.
+    pushMove(change) {
+      historySan.push(change.san);
+      renderMoveList();
+    },
+    // capturedMap: { w: {type:count}, b: {type:count}, promoted: {w,b} } from
+    // material.capturedFromFen. w/b key by the color of the CAPTURED piece
+    // (see material.js), so "White captured" reads from capturedMap.b and
+    // vice versa.
+    setCaptured(capturedMap) {
+      renderTraySide(trayWEl, capturedMap?.b, 'White captured');
+      renderTraySide(trayBEl, capturedMap?.w, 'Black captured');
+      advantageEl.textContent = formatAdvantage(materialAdvantage(capturedMap ?? { w: {}, b: {} }));
+    },
     getSide() { return sideEl.value; },
     getSkill() { return Number(skillEl.value); },
     getTheme() { return themeEl.value; },

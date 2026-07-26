@@ -101,6 +101,36 @@ describe('Game', () => {
     expect(g.kingSquare('w')).toBe('e2');
   });
 
+  it('reports SAN for a quiet move, a capture, castling, and a promotion', () => {
+    let g = new Game();
+    expect(g.makeMove({ from: 'e2', to: 'e4' }).san).toBe('e4');
+
+    g = new Game('rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2');
+    expect(g.makeMove({ from: 'e4', to: 'd5' }).san).toBe('exd5');
+
+    g = new Game('r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1');
+    expect(g.makeMove({ from: 'e1', to: 'g1' }).san).toBe('O-O');
+
+    g = new Game('4k3/1P6/8/8/8/8/8/4K3 w - - 0 1');
+    expect(g.makeMove({ from: 'b7', to: 'b8', promotion: 'q' }).san).toBe('b8=Q+');
+  });
+
+  it('increments moveNumber for a White/Black pair and tracks it across turns', () => {
+    const g = new Game();
+    expect(g.makeMove({ from: 'e2', to: 'e4' }).moveNumber).toBe(1); // White's move 1
+    expect(g.makeMove({ from: 'e7', to: 'e5' }).moveNumber).toBe(1); // Black's move 1 (same pair)
+    expect(g.makeMove({ from: 'g1', to: 'f3' }).moveNumber).toBe(2); // White's move 2
+    expect(g.makeMove({ from: 'b8', to: 'c6' }).moveNumber).toBe(2); // Black's move 2 (same pair)
+  });
+
+  it('history() returns the SAN move list', () => {
+    const g = new Game();
+    g.makeMove({ from: 'e2', to: 'e4' });
+    g.makeMove({ from: 'e7', to: 'e5' });
+    g.makeMove({ from: 'g1', to: 'f3' });
+    expect(g.history()).toEqual(['e4', 'e5', 'Nf3']);
+  });
+
   it('resets to a new game and emits reset', () => {
     const g = new Game();
     g.makeMove({ from: 'e2', to: 'e4' });

@@ -6,6 +6,7 @@ import { createEngine } from './engine.js';
 import { createUI, statusText } from './ui.js';
 import { createPiece, loadPieces } from './pieces.js';
 import { allSquares } from './coords.js';
+import { capturedFromFen } from './material.js';
 
 const appEl = document.getElementById('app');
 const sceneEl = document.getElementById('scene');
@@ -50,6 +51,10 @@ function syncBoardFromGame() {
   // here, so they don't.
   if (lastMove) scene.setLastMove(lastMove.from, lastMove.to);
   scene.setCheck(game.isCheck() ? game.kingSquare(game.turn()) : null);
+  // Re-derive, don't accumulate: covers New Game, a piece-set switch, and the
+  // dev loadFen hook the same way the piece placement above does.
+  ui.setHistory(game.history());
+  ui.setCaptured(capturedFromFen(game.fen()));
 }
 
 // --- reflect a move change-set on the board -----------------------------------
@@ -61,6 +66,13 @@ async function onMove(change) {
     lastMove = { from: change.from, to: change.to };
     scene.setLastMove(change.from, change.to);
     scene.setCheck(null); // the previous glow is stale the instant a move lands
+
+    // Before any await, so this can never land stale: onMove is synchronous up
+    // to the first await below, and a New Game cannot interleave before then.
+    // change.fenAfter (not game.fen()) is the position THIS move produced,
+    // immune to anything that advances the game before the animation settles.
+    ui.pushMove(change);
+    ui.setCaptured(capturedFromFen(change.fenAfter));
 
     // capturePiece MUST be called before movePiece: it detaches the victim from
     // scene.pieces synchronously, which is what stops movePiece's
