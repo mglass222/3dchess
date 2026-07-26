@@ -153,14 +153,28 @@ const MATERIALS = {
     // These read far more saturated than the pieces do on screen, deliberately.
     // The map is the only source of piece colour (material.color is white), and
     // the IBL, clearcoat and sheen layers all add near-neutral highlight on top,
-    // so roughly 58% of the map's saturation is washed out by the time it is
-    // rendered. Measured at the default orbit: 0xe6d3b6 (source saturation 0.21)
-    // came out at 0.08, which read as plain white; 0xe8c48b (0.40) lands at 0.19,
-    // which reads as cream. Judge any change to these by the rendered result, not
-    // by the swatch — and note the pair also holds a 1.073 base:grain luminance
-    // ratio, matched to the blue pieces so both sets carry the same grain depth.
-    baseHex: 0xe8c48b,
-    grainHex: 0xf3d5a3,
+    // so much of the map's saturation is washed out by the time it is rendered.
+    // Judge any change to these by the rendered result, not by the swatch — and
+    // note the pair also holds a 1.073 base:grain luminance ratio, matched to
+    // the blue pieces so both sets carry the same grain depth.
+    //
+    // RE-MEASURED after the composer/ACES/theme-lighting passes went in. Those
+    // raised the washout from the ~58% this was originally calibrated against
+    // to ~73%, and the whites drifted back to reading as plain white: 0xe8c48b
+    // (source saturation 0.40) had been landing at 0.19 rendered, and was
+    // measured at 0.109 — nearly back to the 0.08 that was rejected as "plain
+    // white" in the first place. Nothing about the pieces changed; the pipeline
+    // moved underneath them, so expect this to need re-measuring again after
+    // any further work on tone mapping or bloom.
+    //
+    // The response is not linear, because bloom clips the brightest texels and
+    // takes their colour with it: raising source saturation 0.40 -> 0.60 moved
+    // the rendered value 0.109 -> 0.278, well past the target, since the darker
+    // albedo also clipped less. 0.509 lands at 0.219 rendered, which reads as
+    // ivory. Measured over piece pixels only, with the board and table hidden
+    // so the board's cream squares cannot pull the average.
+    baseHex: 0xd4aa68,
+    grainHex: 0xe3b670,
     seed: 0.8,
     roughness: 0.26,
     metalness: 0.02,
@@ -172,13 +186,20 @@ const MATERIALS = {
     envMapIntensity: 0.9,
   }),
   b: createWoodMaterial({
-    baseHex: 0x2c65a8,
-    // was 0x74a7df, whose luminance ratio against the base was 1.71 versus the
-    // white pair's 1.073. That 2.4x mismatch was invisible while the UVs were
-    // mis-scaled; once the projection was fixed and the grain actually resolved,
-    // it read as marbled porcelain rather than stained wood. 0x3374c1 puts blue
-    // at 1.15 — slightly above white, which a darker stain can carry.
-    grainHex: 0x3374c1,
+    baseHex: 0x1f4e83,
+    // The ratio against the base is the thing to preserve here, not the hex:
+    // this was once 0x74a7df, whose luminance ratio was 1.71 versus the white
+    // pair's 1.073. That 2.4x mismatch was invisible while the UVs were
+    // mis-scaled; once the projection was fixed and the grain actually
+    // resolved, it read as marbled porcelain rather than stained wood. The
+    // pair sits at 1.15 — slightly above white, which a darker stain carries.
+    //
+    // Deepened alongside the whites in the same re-measure. The blue washes out
+    // less than the white does (it is darker, so bloom clips it less), so it
+    // needed less: rendered saturation went 0.463 -> 0.513 and, more to the
+    // point, rendered luminance 0.609 -> 0.513, which is what stops it reading
+    // as pale sky blue rather than a stain.
+    grainHex: 0x245a97,
     seed: 4.1,
     roughness: 0.23,
     metalness: 0.04,

@@ -133,8 +133,20 @@ describe('pieces', () => {
     expect(blue.vertexColors).toBe(false);
     expect(white.map).toBeInstanceOf(THREE.DataTexture);
     expect(blue.map).toBeInstanceOf(THREE.DataTexture);
-    expect(white.userData.woodGrain).toMatchObject({ baseHex: 0xe8c48b, grainHex: 0xf3d5a3 });
-    expect(blue.userData.woodGrain).toMatchObject({ baseHex: 0x2c65a8, grainHex: 0x3374c1 });
+    expect(white.userData.woodGrain).toMatchObject({ baseHex: 0xd4aa68, grainHex: 0xe3b670 });
+    expect(blue.userData.woodGrain).toMatchObject({ baseHex: 0x1f4e83, grainHex: 0x245a97 });
+
+    // The hexes above are a tuning knob and will move again whenever the
+    // render is re-measured. The base:grain LUMINANCE ratio is not - it is what
+    // gives each set the same grain depth, and it was set deliberately after a
+    // 1.71-vs-1.073 mismatch made the blue read as marbled porcelain rather
+    // than stained wood. Assert the constraint, not just the current values.
+    const luma = (hex) => 0.2126 * ((hex >> 16) & 255)
+      + 0.7152 * ((hex >> 8) & 255)
+      + 0.0722 * (hex & 255);
+    const ratio = ({ baseHex, grainHex }) => luma(grainHex) / luma(baseHex);
+    expect(ratio(white.userData.woodGrain)).toBeCloseTo(1.073, 2);
+    expect(ratio(blue.userData.woodGrain)).toBeCloseTo(1.15, 2);
     expect(white.roughness).toBeCloseTo(0.26, 5);
     expect(blue.roughness).toBeCloseTo(0.23, 5);
     expect(white.clearcoat).toBeCloseTo(0.55, 5);
