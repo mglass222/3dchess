@@ -27,7 +27,7 @@ export const ENVIRONMENT_BLUR = 0.04;
 // one place (WebGLRenderer: isMeshStandardMaterial && material.envMap === null
 // && scene.environment !== null), so it applies to standard materials that did
 // not get their own envMap from applyEnvironmentMap. Today there are none — the
-// board (64 square clones), frame, stone and both piece materials are all
+// board (64 square clones), frame and both piece materials are all
 // stamped, and everything else in the scene is MeshBasic/Points, which ignore
 // IBL entirely. So changing this value currently changes nothing on screen;
 // per-material envMapIntensity is the live knob. Kept as a sane default for any
@@ -101,8 +101,8 @@ export function createEnvironment({
 }
 
 // Assigns `texture` as `envMap` on every isMeshStandardMaterial material found
-// under `root` (MeshPhysicalMaterial extends MeshStandardMaterial, so board
-// and stone materials are included). This is required for envMapIntensity to
+// under `root` (MeshPhysicalMaterial extends MeshStandardMaterial, so the
+// board and frame materials are included). This is required for envMapIntensity to
 // have any effect at all: three's refreshUniformsStandard only applies
 // material.envMapIntensity when material.envMap is set, and setProgram only
 // falls back to scene.environmentIntensity when material.envMap is null -
@@ -232,48 +232,6 @@ export function createBoardMaterials({
       userData: { boardTexture: BOARD_TEXTURES.frame },
     }),
   };
-}
-
-export function createStoneMaterial() {
-  return new THREE.MeshStandardMaterial({
-    color: 0x7d7868,
-    roughness: 0.94,
-    metalness: 0,
-    envMapIntensity: 0.15,
-  });
-}
-
-export function createStoneTable() {
-  const table = new THREE.Group();
-  table.name = 'stone-table';
-  const stone = createStoneMaterial();
-
-  const slab = new THREE.Mesh(new THREE.BoxGeometry(10.4, 0.42, 10.4), stone);
-  slab.position.y = -0.55;
-  slab.castShadow = true;
-  slab.receiveShadow = true;
-  table.add(slab);
-
-  const bevel = new THREE.Mesh(new THREE.CylinderGeometry(7.25, 7.5, 0.28, 8), stone);
-  bevel.position.y = -0.83;
-  bevel.rotation.y = Math.PI / 8;
-  bevel.castShadow = true;
-  bevel.receiveShadow = true;
-  table.add(bevel);
-
-  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3.35, 1.95, 12), stone);
-  pedestal.position.y = -1.93;
-  pedestal.castShadow = true;
-  pedestal.receiveShadow = true;
-  table.add(pedestal);
-
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(4.35, 4.8, 0.38, 12), stone);
-  base.position.y = -3.1;
-  base.castShadow = true;
-  base.receiveShadow = true;
-  table.add(base);
-
-  return table;
 }
 
 export const CAPTURE_DELAY = 110;      // ms — the attacker is ~40% into its 280ms arc
@@ -444,7 +402,7 @@ export function applyThemeLighting({
 }
 
 // Rescales envMapIntensity on every material applyEnvironmentMap already
-// stamped (board, frame, stone — anything under `root` with an envMap), by
+// stamped (board, frame — anything under `root` with an envMap), by
 // `factor` relative to each material's OWN original intensity, captured into
 // userData.baseEnvMapIntensity on first call so repeated theme switches never
 // compound. Plain uniform refresh in three (refreshUniformsStandard) — no
@@ -549,7 +507,7 @@ export class Scene {
     this._addEnvironment();
     this._addLights();
     this._buildBoard();
-    // Board/stone materials are built by _buildBoard, so this traverse must
+    // Board materials are built by _buildBoard, so this traverse must
     // come after it - unlike piece materials (module-scope singletons wired
     // up inside _addEnvironment via setPieceEnvironmentMap), the board group
     // doesn't exist yet when _addEnvironment runs.
@@ -652,9 +610,10 @@ export class Scene {
   }
 
   _buildBoard() {
-    const table = createStoneTable();
-    this.scene.add(table);
-
+    // The board floats unsupported - no table, no ground plane. Deliberate:
+    // the backdrop is an open gradient sky (a starfield too, on the themes that
+    // set `stars`), and anything holding the board up sits in front of it and
+    // competes for attention.
     this.scene.add(createChessBoard({ textureLoader: new THREE.TextureLoader() }));
   }
 

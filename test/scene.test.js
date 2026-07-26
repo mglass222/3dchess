@@ -25,8 +25,6 @@ import {
   createBoardMaterials,
   createChessBoard,
   createEnvironment,
-  createStoneMaterial,
-  createStoneTable,
   applyRendererQuality,
   moveDuration,
   moveProfile,
@@ -170,33 +168,6 @@ describe('scene rendering helpers', () => {
     expect(highestFrameTop).toBeLessThan(squareTop);
   });
 
-  it('creates a stone material suitable for the table', () => {
-    const material = createStoneMaterial();
-
-    expect(material).toBeInstanceOf(THREE.MeshStandardMaterial);
-    expect(material.color.getHex()).toBe(0x7d7868);
-    expect(material.roughness).toBeCloseTo(0.94, 5);
-  });
-
-  it('creates a shadow-casting stone table group below the board', () => {
-    const table = createStoneTable();
-    const meshes = [];
-    table.traverse((child) => {
-      if (child.isMesh) meshes.push(child);
-    });
-
-    expect(table.name).toBe('stone-table');
-    expect(meshes.length).toBeGreaterThanOrEqual(3);
-    expect(meshes.every((mesh) => mesh.castShadow)).toBe(true);
-    expect(meshes.every((mesh) => mesh.receiveShadow)).toBe(true);
-
-    const box = new THREE.Box3().setFromObject(table);
-    expect(box.max.y).toBeLessThan(0);
-    expect(box.min.y).toBeLessThan(-1);
-    expect(box.max.x - box.min.x).toBeGreaterThan(9);
-    expect(box.max.z - box.min.z).toBeGreaterThan(9);
-  });
-
   it('applies high quality renderer settings to compatible renderers', () => {
     const renderer = {
       shadowMap: {},
@@ -311,11 +282,11 @@ describe('scene rendering helpers', () => {
   it('applyEnvironmentMap assigns a live envMap to every standard material found, and only once', () => {
     const texture = new THREE.Texture();
     const boardMaterial = new THREE.MeshPhysicalMaterial(); // extends MeshStandardMaterial
-    const stoneMaterial = new THREE.MeshStandardMaterial();
+    const plainMaterial = new THREE.MeshStandardMaterial();
     const basicMaterial = new THREE.MeshBasicMaterial(); // not isMeshStandardMaterial
     const root = new THREE.Group();
     root.add(new THREE.Mesh(new THREE.BoxGeometry(), boardMaterial));
-    root.add(new THREE.Mesh(new THREE.BoxGeometry(), stoneMaterial));
+    root.add(new THREE.Mesh(new THREE.BoxGeometry(), plainMaterial));
     root.add(new THREE.Mesh(new THREE.BoxGeometry(), basicMaterial));
     // A SECOND mesh on an already-listed material, mirroring the real board
     // where one frame material is reused by both the frame and the inset mesh.
@@ -328,7 +299,7 @@ describe('scene rendering helpers', () => {
     expect(boardMaterial.version).toBe(sharedVersionBefore + 1);
 
     expect(boardMaterial.envMap).toBe(texture);
-    expect(stoneMaterial.envMap).toBe(texture);
+    expect(plainMaterial.envMap).toBe(texture);
     expect(basicMaterial.envMap).not.toBe(texture);
 
     // Reset the version counters, then call again: a material that already
@@ -448,7 +419,7 @@ describe('scene rendering helpers', () => {
     // Camera default is (0, 9, 9) looking at the origin, so the orbit distance
     // is sqrt(9^2 + 9^2) ~= 12.73. The board extends +/-4.4 in X/Z, so the near
     // board edge is ~10.1 away and the far corner ~16.7 away. minDistance is 6
-    // (fog should be negligible there); maxDistance is 28, where the table
+    // (fog should be negligible there); maxDistance is 28, where the board
     // should still read as haze rather than a wash.
     const falloff = (distance) => 1 - Math.exp(-((distance * DEFAULT_FOG_DENSITY) ** 2));
 
