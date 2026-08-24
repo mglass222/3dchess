@@ -28,8 +28,6 @@ npm run build    # production build into dist/
 npm run preview  # serve the production build
 ```
 
-The `main` branch auto-deploys to **https://mglass222.github.io/3dchess/** via GitHub Actions (`.github/workflows/deploy.yml`) on every push.
-
 ## Test
 
 ```bash
