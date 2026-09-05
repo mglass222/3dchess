@@ -1,58 +1,88 @@
 # 3D Chess
 
-A web-based chess game rendered in 3D. Play against a built-in Stockfish AI on a board you can freely orbit with the mouse. Standard chess rules; the "3D" is the presentation.
+Play chess against Stockfish in a 3D scene with detailed pieces, a wooden board, and recorded piece sounds. Rotate the camera, choose a visual theme, and adjust the computer's strength.
 
-**▶ Play it live: https://mglass222.github.io/3dchess/**
+**[Play in your browser](https://mglass222.github.io/3dchess/)**
 
 ![Ivory and blue Staunton chess pieces on a walnut-framed board in the Walnut Study theme](docs/readme-walnut-staunton.jpg)
 
-## Requirements
+## Features
 
-- Node.js 18+ and npm
+- **Standard chess rules**, including castling, en passant, and a promotion picker.
+- **Stockfish opponent** with adjustable difficulty and a choice of playing White or Black.
+- **Two piece sets:** detailed Default Staunton pieces and an alternative Downloaded set.
+- **Five visual themes**, including Walnut Study and Cosmos, with coordinated backgrounds and lighting.
+- **Textured wood surfaces**, a crafted board frame, and a furnished table setting.
+- **Recorded landing sounds** for moves and captures, with a saved mute setting.
+- **Move history, captured-piece trays, and material advantage**, plus highlights for legal moves, the last move, and check.
 
-## Setup
+## How to play
+
+Click one of your pieces, then click a highlighted destination to move. When a pawn promotes, choose its new piece from the picker.
+
+| Control | Action |
+| --- | --- |
+| Drag the board | Orbit the camera through 360° and tilt from above to just above board level. |
+| Mouse wheel | Zoom in or out. |
+| Play | Choose your color for the next game. |
+| New Game | Start over using the selected color and difficulty. |
+| Difficulty | Adjust Stockfish's skill level from 0 to 20. |
+| Theme | Change the background and lighting. |
+| Pieces | Switch piece sets while keeping the current position. |
+| Sound: On / Off | Enable or mute piece sounds. |
+
+Theme, piece-set, and sound preferences are remembered between visits. Audio becomes available after you interact with the page.
+
+## Run locally
+
+Use **Node.js 22 or newer** and npm. From the project directory:
 
 ```bash
-npm install
+npm ci
+npm run dev
 ```
 
-`npm install` also runs a `postinstall` step that vendors the Stockfish engine
-(`stockfish-18-lite-single.js` + `.wasm`) into `public/engine/`. That directory is
-generated and git-ignored; if it's ever missing, run `node scripts/copy-engine.js`.
+Open the local URL printed by Vite.
 
-## Run
+Installation automatically copies the Stockfish JavaScript and WebAssembly files into `public/engine/`. If installation scripts were disabled or those files are missing, restore them with:
 
 ```bash
-npm run dev      # start the dev server, then open the printed local URL
-npm run build    # production build into dist/
-npm run preview  # serve the production build
+node scripts/copy-engine.js
 ```
 
-## Test
+### Development commands
 
-```bash
-npm test         # run the unit suite (Vitest)
-```
+| Command | Purpose |
+| --- | --- |
+| `npm run dev` | Start the development server. |
+| `npm test` | Run the Vitest test suite. |
+| `npm run test:watch` | Rerun tests as files change. |
+| `npm run build` | Create a production build in `dist/`. |
+| `npm run preview` | Serve the production build locally after building. |
+| `npm run models:build` | Regenerate the Default piece models. |
 
-## Controls
+The production build uses the `/3dchess/` base path. To host it at another path, update `base` in [vite.config.js](vite.config.js) before building.
 
-- **Drag** with the mouse to orbit the camera around the board (360°, and tilt down to view from underneath; "up" stays up).
-- **Mouse wheel** to zoom.
-- **Click** one of your pieces to select it — its legal moves highlight — then **click** a highlighted square to move.
-- **New Game** resets; **Play** chooses your color; **Difficulty** sets the AI strength (Stockfish Skill Level 0–20).
-- **Sound: On / Off** toggles wooden landing and capture sounds; the setting is remembered between visits.
+The Default GLBs are already included; rebuilding models is only needed when changing their geometry. The authoring script uses the bundled Downloaded set as the knight-head source and runs meshoptimizer offline. See the [model authoring notes](public/models/Default/README.md).
 
-## How it works
+## Project guide
 
-- **Rendering** — Three.js scene with an orbit-only camera, GLB chess-piece models loaded via `GLTFLoader` (preloaded into normalized, tintable templates), and animated moves (`src/scene.js`, `src/pieces.js`, `src/coords.js`).
-- **Rules** — `chess.js` wrapped by `src/game.js`, which is the source of truth and emits board "change-sets" for the view to animate.
-- **AI** — Stockfish compiled to WebAssembly, run in a Web Worker (`src/engine.js`) and driven by `src/ai.js` over the UCI protocol.
-- **Input / UI** — click-to-move with raycasting (`src/input.js`) and a minimal DOM overlay (`src/ui.js`); `src/main.js` wires it all together.
-- **Sound** — a recorded chess-piece impact through Web Audio (`src/sound.js`), synchronized to landing frames. The small bundled WAV is preloaded; audio starts after a user gesture, with slightly louder captures and a saved mute setting.
+| Area | Files |
+| --- | --- |
+| App setup, turns, and board synchronization | [`src/main.js`](src/main.js) |
+| Chess rules and move handling | [`src/game.js`](src/game.js), [`src/input.js`](src/input.js) |
+| Stockfish worker and AI requests | [`src/engine.js`](src/engine.js), [`src/ai.js`](src/ai.js) |
+| Scene, furniture, pieces, and animation | [`src/scene.js`](src/scene.js), [`src/furnishing.js`](src/furnishing.js), [`src/pieces.js`](src/pieces.js), [`src/camera.js`](src/camera.js) |
+| Themes and controls | [`src/themes.js`](src/themes.js), [`src/ui.js`](src/ui.js) |
+| Recorded audio and playback | [`src/sound.js`](src/sound.js), [`public/audio/`](public/audio/) |
+| Tests | [`test/`](test/) |
+
+The game runs in the browser. Stockfish uses a Web Worker, Three.js renders the scene, and Web Audio plays the bundled landing sample in sync with piece contact.
 
 ## Credits
 
-- Piece landing audio: the second impact in ["chess pieces.wav" by simone_ds](https://freesound.org/people/simone_ds/sounds/366065/), CC0. See `public/audio/README.md` for extraction details.
-- Default pieces: original Staunton bodies and crowns generated with `npm run models:build`.
-- Default knight head and Downloaded set: ["Realistic Chess Set 3D Model"](https://sketchfab.com/3d-models/realistic-chess-set-3d-model-a07b3ac3f57f4fa3822e3f2d6241a7b0) by [noob-3d](https://sketchfab.com/noob-3d), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The Default knight head is extracted, simplified, sculpted and fitted to a new pedestal; see `public/models/Default/LICENSE.txt`.
-- Chess engine: [Stockfish](https://stockfishchess.org/). Rules: [chess.js](https://github.com/jhlywa/chess.js). Rendering: [three.js](https://threejs.org/).
+- **Default pieces:** original Staunton bodies and crowns generated by [the model authoring script](scripts/build-default-pieces.js).
+- **Knight head and Downloaded set:** [Realistic Chess Set 3D Model](https://sketchfab.com/3d-models/realistic-chess-set-3d-model-a07b3ac3f57f4fa3822e3f2d6241a7b0) by [noob-3d](https://sketchfab.com/noob-3d), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The Default knight head is adapted; see the [model credits and modification notice](public/models/Default/LICENSE.txt).
+- **Board textures:** CC0 cherry and walnut veneer maps from Poly Haven. See the [texture sources and credits](public/textures/board/README.md).
+- **Landing sound:** the second impact in [chess pieces.wav](https://freesound.org/people/simone_ds/sounds/366065/) by simone_ds, released under CC0. See the [audio source and editing notes](public/audio/README.md).
+- **Libraries:** [Stockfish](https://stockfishchess.org/), [chess.js](https://github.com/jhlywa/chess.js), and [Three.js](https://threejs.org/).
