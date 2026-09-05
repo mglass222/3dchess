@@ -4,7 +4,7 @@ A web-based chess game rendered in 3D. Play against a built-in Stockfish AI on a
 
 **▶ Play it live: https://mglass222.github.io/3dchess/**
 
-![3D chess board with red opposing pieces](docs/readme-board-red-pieces.png)
+![Ivory and blue Staunton chess pieces on a walnut-framed board in the Walnut Study theme](docs/readme-walnut-staunton.jpg)
 
 ## Requirements
 
@@ -40,6 +40,7 @@ npm test         # run the unit suite (Vitest)
 - **Mouse wheel** to zoom.
 - **Click** one of your pieces to select it — its legal moves highlight — then **click** a highlighted square to move.
 - **New Game** resets; **Play** chooses your color; **Difficulty** sets the AI strength (Stockfish Skill Level 0–20).
+- **Sound: On / Off** toggles wooden landing and capture sounds; the setting is remembered between visits.
 
 ## How it works
 
@@ -47,8 +48,11 @@ npm test         # run the unit suite (Vitest)
 - **Rules** — `chess.js` wrapped by `src/game.js`, which is the source of truth and emits board "change-sets" for the view to animate.
 - **AI** — Stockfish compiled to WebAssembly, run in a Web Worker (`src/engine.js`) and driven by `src/ai.js` over the UCI protocol.
 - **Input / UI** — click-to-move with raycasting (`src/input.js`) and a minimal DOM overlay (`src/ui.js`); `src/main.js` wires it all together.
+- **Sound** — a recorded chess-piece impact through Web Audio (`src/sound.js`), synchronized to landing frames. The small bundled WAV is preloaded; audio starts after a user gesture, with slightly louder captures and a saved mute setting.
 
 ## Credits
 
-- 3D chess piece models: ["chess-3d"](https://github.com/ernest-rudnicki/chess-3d) by Ernest Rudnicki, MIT License (see `public/models/LICENSE.txt`).
+- Piece landing audio: the second impact in ["chess pieces.wav" by simone_ds](https://freesound.org/people/simone_ds/sounds/366065/), CC0. See `public/audio/README.md` for extraction details.
+- Default pieces: original Staunton bodies and crowns generated with `npm run models:build`.
+- Default knight head and Downloaded set: ["Realistic Chess Set 3D Model"](https://sketchfab.com/3d-models/realistic-chess-set-3d-model-a07b3ac3f57f4fa3822e3f2d6241a7b0) by [noob-3d](https://sketchfab.com/noob-3d), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The Default knight head is extracted, simplified, sculpted and fitted to a new pedestal; see `public/models/Default/LICENSE.txt`.
 - Chess engine: [Stockfish](https://stockfishchess.org/). Rules: [chess.js](https://github.com/jhlywa/chess.js). Rendering: [three.js](https://threejs.org/).

@@ -46,7 +46,7 @@ function describeCaptured(map) {
 }
 
 // Builds the HTML overlay and returns handles the app uses to drive it.
-// handlers: { onNewGame(side, skill), onSkillChange(skill), onThemeChange, onPieceSetChange }
+// handlers: { onNewGame(side, skill), onSkillChange(skill), onThemeChange, onPieceSetChange, onSoundChange }
 export function createUI(container, handlers) {
   const root = document.createElement('div');
   root.id = 'ui';
@@ -59,6 +59,11 @@ export function createUI(container, handlers) {
       #ui { position:absolute; top:0; left:0; right:0; padding:14px;
             display:flex; pointer-events:none; }
       #ui > * { pointer-events:auto; }
+      .piece-credits { position:fixed; bottom:12px; right:14px; color:#d9d5cc;
+        font:12px system-ui,sans-serif; padding:5px 9px; border-radius:6px;
+        background:rgba(18,22,30,.65); text-decoration:none; }
+      .piece-credits:hover { text-decoration:underline; }
+      .piece-credits:focus-visible { outline:2px solid #7fb0ff; outline-offset:2px; }
 
       /* Compact glass card, not a full-width bar. Kept narrow on purpose:
          backdrop-filter forces layer promotion and a per-frame blur of
@@ -182,6 +187,7 @@ export function createUI(container, handlers) {
             cursor:pointer; border:1px solid rgba(255,255,255,0.2);
             background:rgba(255,255,255,0.08); }
     </style>
+    <a class="piece-credits" href="${import.meta.env.BASE_URL}models/Default/LICENSE.txt" target="_blank" rel="noopener">Piece credits</a>
     <div id="panel">
       <div class="controls-row">
         <button id="newgame">New Game</button>
@@ -198,6 +204,7 @@ export function createUI(container, handlers) {
         <label>Pieces
           <select id="pieceset"></select>
         </label>
+        <button id="sound" type="button" aria-pressed="true" aria-label="Move sounds">Sound: On</button>
         <span class="status" id="status" role="status" aria-live="polite">White to move</span>
       </div>
       <div class="extras">
@@ -230,6 +237,16 @@ export function createUI(container, handlers) {
   const sideEl = root.querySelector('#side');
   const themeEl = root.querySelector('#theme');
   const pieceSetEl = root.querySelector('#pieceset');
+  const soundEl = root.querySelector('#sound');
+  function setSoundEnabled(enabled) {
+    soundEl.setAttribute('aria-pressed', String(enabled));
+    soundEl.textContent = enabled ? 'Sound: On' : 'Sound: Off';
+  }
+  soundEl.addEventListener('click', () => {
+    const enabled = soundEl.getAttribute('aria-pressed') !== 'true';
+    setSoundEnabled(enabled);
+    handlers.onSoundChange?.(enabled);
+  });
   const trayWEl = root.querySelector('#trayW');
   const trayBEl = root.querySelector('#trayB');
   const advantageEl = root.querySelector('#advantage');
@@ -295,6 +312,7 @@ export function createUI(container, handlers) {
   }
 
   return {
+    setSoundEnabled,
     setStatus(text) { statusEl.textContent = text; },
     setThinking(on) { statusEl.classList.toggle('thinking', on); if (on) statusEl.textContent = 'Computer is thinking…'; },
     // Wholesale replace: the one path a board resync (New Game, piece-set

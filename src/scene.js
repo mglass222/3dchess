@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { createBoardFrame, createTable, createStudyEnvironment, WINDOW_POSITION } from './furnishing.js';
 import {
   allSquares, squareToWorld, worldToSquare, isLightSquare, fileIndex, rankIndex,
 } from './coords.js';
@@ -13,25 +13,13 @@ import { MarkerLayer } from './markers.js';
 import { createPostProcessing } from './postfx.js';
 import { CameraFlight, easeOutCubic, newGamePose, CAMERA_NEW_GAME_DURATION } from './camera.js';
 
-const LIGHT_SQ = 0xe8d6ae; // was 0xdac799 — the texture mean dropped ~0.88 -> ~0.74,
-                            // so the colour comes up to hold the same on-screen value
-// was 0x724528. Measured in the browser at the default orbit: with the neutral
-// grain map, 0x4a3426 rendered dark squares at 13.2% luminance and 0x584032 at
-// 15.8% — both short of the 18-24% that gives the darks visible grain. 0x6e5340
-// lands at 20.7%, putting light:dark at 3.1:1 (it was ~8:1 with the burl map).
-const DARK_SQ = 0x6e5340;
+// Scanned veneer supplies its own color; these tints control the finish.
+const LIGHT_SQ = 0xe5edff;
+const DARK_SQ = 0xf4dfc5;
 
 export const CAMERA_MAX_POLAR_ANGLE = Math.PI / 2 - 0.04;
 export const ENVIRONMENT_BLUR = 0.04;
-// Fallback IBL strength ONLY. three reads scene.environmentIntensity in exactly
-// one place (WebGLRenderer: isMeshStandardMaterial && material.envMap === null
-// && scene.environment !== null), so it applies to standard materials that did
-// not get their own envMap from applyEnvironmentMap. Today there are none — the
-// board (64 square clones), frame and both piece materials are all
-// stamped, and everything else in the scene is MeshBasic/Points, which ignore
-// IBL entirely. So changing this value currently changes nothing on screen;
-// per-material envMapIntensity is the live knob. Kept as a sane default for any
-// standard material added later that misses the traverse.
+// Fallback for standard materials without an explicit environment map.
 const ENVIRONMENT_INTENSITY = 0.25;
 
 // The base punctual-light rig _addLights chooses between, keyed on whether
@@ -46,26 +34,22 @@ export const LIGHT_RIG = {
 
 export const BOARD_TEXTURES = {
   light: {
-    url: 'textures/board/maple-grain.svg',
-    // Light and dark must share a physical grain scale — 1.8 vs 1.65 was an
-    // accident that rendered two woods at different physical sizes.
-    repeat: [1.0, 1.0],
-    anisotropy: 16,
+    url: 'textures/board/cherry-color.jpg',
+    normal: 'textures/board/cherry-normal.jpg',
+    roughness: 'textures/board/cherry-roughness.jpg',
+    repeat: [0.24, 0.24], anisotropy: 16,
   },
   dark: {
-    url: 'textures/board/walnut-grain.svg',
-    repeat: [1.0, 1.0],
-    anisotropy: 16,
+    url: 'textures/board/walnut-color.jpg',
+    normal: 'textures/board/walnut-normal.jpg',
+    roughness: 'textures/board/walnut-roughness.jpg',
+    repeat: [0.24, 0.24], anisotropy: 16,
   },
   frame: {
-    // The frame is BoxGeometry(8.8, ...) carrying the same 0-1 UV span as a
-    // single square, so a repeat equal to the squares' (or a small multiple)
-    // would render border grain far too coarse or align tile boundaries into
-    // a visible band. 7.2 gives ~1.22 world units per tile — close to the
-    // squares' physical scale without being an integer multiple of it.
-    url: 'textures/board/walnut-grain.svg',
-    repeat: [7.2, 7.2],
-    anisotropy: 16,
+    url: 'textures/board/walnut-color.jpg',
+    normal: 'textures/board/walnut-normal.jpg',
+    roughness: 'textures/board/walnut-roughness.jpg',
+    repeat: [0.24, 0.24], anisotropy: 16,
   },
 };
 
@@ -84,7 +68,7 @@ export function applyRendererQuality(renderer) {
 export function createEnvironment({
   renderer,
   pmremFactory = (r) => new THREE.PMREMGenerator(r),
-  roomFactory = () => new RoomEnvironment(),
+  roomFactory = () => createStudyEnvironment(),
 } = {}) {
   const generator = pmremFactory(renderer);
   const room = roomFactory();
@@ -133,8 +117,8 @@ function textureUrl(baseUrl, path) {
   return `${base}${path}`;
 }
 
-function configureBoardTexture(texture, descriptor, transform = {}) {
-  texture.colorSpace = THREE.SRGBColorSpace;
+function configureBoardTexture(texture, descriptor, transform = {}, colorSpace = THREE.SRGBColorSpace) {
+  texture.colorSpace = colorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(descriptor.repeat[0], descriptor.repeat[1]);
@@ -146,14 +130,15 @@ function configureBoardTexture(texture, descriptor, transform = {}) {
   return texture;
 }
 
-function loadBoardTexture(textureLoader, key, baseUrl) {
+function loadBoardTexture(textureLoader, key, baseUrl, channel = 'url') {
   const descriptor = BOARD_TEXTURES[key];
-  const url = textureUrl(baseUrl, descriptor.url);
+  const url = textureUrl(baseUrl, descriptor[channel]);
   const texture = textureLoader.load(url, undefined, undefined, (error) => {
-    console.warn(`Failed to load board texture "${key}" from ${url}`, error);
+    console.warn(`Failed to load board texture "${key}/${channel}" from ${url}`, error);
   });
-  texture.name = key === 'light' ? 'maple-grain' : 'walnut-grain';
-  return configureBoardTexture(texture, descriptor);
+  texture.name = `${key}-${channel}`;
+  return configureBoardTexture(texture, descriptor, {},
+    channel === 'url' ? THREE.SRGBColorSpace : THREE.NoColorSpace);
 }
 
 function boardSquareTextureTransform(square) {
@@ -177,60 +162,38 @@ function boardSquareTextureTransform(square) {
 function createBoardSquareMaterial(baseMaterial, textureKey, square) {
   if (!baseMaterial.map) return baseMaterial;
   const material = baseMaterial.clone();
-  material.map = baseMaterial.map.clone();
-  configureBoardTexture(
-    material.map,
-    BOARD_TEXTURES[textureKey],
-    boardSquareTextureTransform(square),
-  );
+  // Color and data maps must sample the same patch of veneer.
+  for (const channel of ['map', 'normalMap', 'roughnessMap']) {
+    if (!baseMaterial[channel]) continue;
+    material[channel] = baseMaterial[channel].clone();
+    configureBoardTexture(material[channel], BOARD_TEXTURES[textureKey],
+      boardSquareTextureTransform(square), baseMaterial[channel].colorSpace);
+  }
   return material;
+}
+
+function createWoodSurface(key, color, roughness, envMapIntensity, textureLoader, baseUrl) {
+  return new THREE.MeshPhysicalMaterial({
+    color,
+    map: textureLoader ? loadBoardTexture(textureLoader, key, baseUrl) : null,
+    normalMap: textureLoader ? loadBoardTexture(textureLoader, key, baseUrl, 'normal') : null,
+    roughnessMap: textureLoader ? loadBoardTexture(textureLoader, key, baseUrl, 'roughness') : null,
+    normalScale: new THREE.Vector2(0.12, 0.12),
+    roughness, metalness: 0,
+    clearcoat: 0.3, clearcoatRoughness: 0.32,
+    envMapIntensity,
+    userData: { boardTexture: BOARD_TEXTURES[key] },
+  });
 }
 
 export function createBoardMaterials({
   textureLoader = null,
   baseUrl = import.meta.env.BASE_URL,
 } = {}) {
-  const lightMap = textureLoader ? loadBoardTexture(textureLoader, 'light', baseUrl) : null;
-  const darkMap = textureLoader ? loadBoardTexture(textureLoader, 'dark', baseUrl) : null;
-  const frameMap = textureLoader ? loadBoardTexture(textureLoader, 'frame', baseUrl) : null;
-  // envMapIntensity below is only live because applyEnvironmentMap gives each of
-  // these materials its own envMap; three ignores the per-material value for a
-  // material relying on scene.environment alone. Measured at the default orbit:
-  // the originally-planned 0.55/0.50/0.45/0.30 pushed light squares to 73% and
-  // darks to 29% (both over target) and the frame mean to 87. These values land
-  // light 64.8% / dark 20.6% at a 3.14:1 ratio. The board deliberately sits well
-  // below the pieces (0.9/1.0) — the pieces should be the reflective objects.
   return {
-    light: new THREE.MeshPhysicalMaterial({
-      color: LIGHT_SQ,
-      map: lightMap,
-      roughness: 0.44,
-      metalness: 0.02,
-      clearcoat: 0.26,
-      clearcoatRoughness: 0.45,
-      envMapIntensity: 0.28,
-      userData: { boardTexture: BOARD_TEXTURES.light },
-    }),
-    dark: new THREE.MeshPhysicalMaterial({
-      color: DARK_SQ,
-      map: darkMap,
-      roughness: 0.48,
-      metalness: 0.03,
-      clearcoat: 0.22,
-      clearcoatRoughness: 0.5,
-      envMapIntensity: 0.25,
-      userData: { boardTexture: BOARD_TEXTURES.dark },
-    }),
-    frame: new THREE.MeshPhysicalMaterial({
-      color: 0x2c2018,
-      map: frameMap,
-      roughness: 0.5,
-      metalness: 0.04,
-      clearcoat: 0.18,
-      clearcoatRoughness: 0.38,
-      envMapIntensity: 0.22,
-      userData: { boardTexture: BOARD_TEXTURES.frame },
-    }),
+    light: createWoodSurface('light', LIGHT_SQ, 0.64, 0.28, textureLoader, baseUrl),
+    dark: createWoodSurface('dark', DARK_SQ, 0.68, 0.25, textureLoader, baseUrl),
+    frame: createWoodSurface('frame', 0xc9a582, 0.7, 0.22, textureLoader, baseUrl),
   };
 }
 
@@ -316,9 +279,16 @@ function disposePieceGeometries(object3d) {
   const disposed = new Set();
   object3d.traverse((child) => {
     const geometry = child.isMesh ? child.geometry : null;
-    if (!geometry?.userData?.pieceInstanceGeometry || disposed.has(geometry)) return;
-    geometry.dispose();
+    if (!geometry || disposed.has(geometry)) return;
     disposed.add(geometry);
+    if (geometry.userData.pieceReferences !== undefined) {
+      // Authored models share immutable buffers. Release GPU storage only when
+      // the last instance leaves; Three can re-upload them on a later New Game.
+      geometry.userData.pieceReferences = Math.max(0, geometry.userData.pieceReferences - 1);
+      if (geometry.userData.pieceReferences === 0) geometry.dispose();
+    } else if (geometry.userData.pieceInstanceGeometry) {
+      geometry.dispose();
+    }
   });
 }
 
@@ -346,22 +316,7 @@ export function createChessBoard({
     board.add(mesh);
   }
 
-  const frameMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(8.8, 0.34, 8.8),
-    frame,
-  );
-  frameMesh.position.y = -0.2;
-  frameMesh.castShadow = true;
-  frameMesh.receiveShadow = true;
-  board.add(frameMesh);
-
-  const inset = new THREE.Mesh(
-    new THREE.BoxGeometry(8.05, 0.08, 8.05),
-    frame,
-  );
-  inset.position.y = -0.08;
-  inset.receiveShadow = true;
-  board.add(inset);
+  board.add(createBoardFrame(frame));
 
   return board;
 }
@@ -590,16 +545,17 @@ export class Scene {
 
     this.keyLight = new THREE.DirectionalLight(0xfff1cf, base.key);
     const key = this.keyLight;
-    key.position.set(6.5, 11, 5);
+    key.position.set(...WINDOW_POSITION);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
     key.shadow.camera.near = 1;
     key.shadow.camera.far = 42;
-    key.shadow.camera.left = -9;
-    key.shadow.camera.right = 9;
-    key.shadow.camera.top = 9;
-    key.shadow.camera.bottom = -9;
+    key.shadow.camera.left = -7;
+    key.shadow.camera.right = 7;
+    key.shadow.camera.top = 7;
+    key.shadow.camera.bottom = -7;
     key.shadow.bias = -0.00015;
+    key.shadow.normalBias = 0.015;
     this.scene.add(key);
 
     this.rimLight = new THREE.DirectionalLight(0xbad7ff, base.rim);
@@ -610,11 +566,16 @@ export class Scene {
   }
 
   _buildBoard() {
-    // The board floats unsupported - no table, no ground plane. Deliberate:
-    // the backdrop is an open gradient sky (a starfield too, on the themes that
-    // set `stars`), and anything holding the board up sits in front of it and
-    // competes for attention.
-    this.scene.add(createChessBoard({ textureLoader: new THREE.TextureLoader() }));
+    const textureLoader = new THREE.TextureLoader();
+    this.scene.add(createChessBoard({ textureLoader }));
+    const tableMaterial = createWoodSurface('frame', 0xb4a18b, 0.95, 0.35, textureLoader, import.meta.env.BASE_URL);
+    // The table is a quieter, open-pore finish than the varnished board.
+    tableMaterial.clearcoat = 0.06;
+    tableMaterial.normalScale.set(0.22, 0.22);
+    for (const channel of ['map', 'normalMap', 'roughnessMap']) {
+      tableMaterial[channel].repeat.set(0.13, 0.13);
+    }
+    this.scene.add(createTable(tableMaterial));
   }
 
   _resize() {
@@ -793,7 +754,7 @@ export class Scene {
   // built through some path other than pieces.js#createPiece (or a test
   // stub) carries no userData.type, so moveProfile falls back to
   // MOVE_DEFAULT - today's original numbers, byte-identical, with settle 0.
-  movePiece(from, to) {
+  movePiece(from, to, { onLand } = {}) {
     const obj = this.pieces.get(from);
     if (!obj) return Promise.resolve();
     this.pieces.delete(from);
@@ -817,6 +778,7 @@ export class Scene {
     // moveDuration drops the distance term for MOVE_DEFAULT itself.
     const duration = moveDuration(type, worldDistance); // ms
     const t0 = performance.now();
+    let landed = false;
     return new Promise((resolve) => {
       const step = (now) => {
         if (obj.userData._moveGen !== myGen || this._boardGen !== myBoardGen) {
@@ -856,6 +818,10 @@ export class Scene {
         // decal stays welded for free, the same path the capture shrink
         // already exercises.
         obj.position.set(end.x, 0, end.z);
+        if (!landed) {
+          landed = true;
+          onLand?.();
+        }
         const settleElapsed = elapsed - duration;
         if (settle > 0 && settleElapsed < MOVE_SETTLE_MS) {
           const s = settleElapsed / MOVE_SETTLE_MS;
