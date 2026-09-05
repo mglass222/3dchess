@@ -4,7 +4,7 @@ A web-based chess game rendered in 3D. Play against a built-in Stockfish AI on a
 
 **▶ Play it live: https://mglass222.github.io/3dchess/**
 
-![3D chess board with red opposing pieces](docs/readme-board-red-pieces.png)
+![Ivory and blue Staunton chess pieces on a walnut-framed board in the Walnut Study theme](docs/readme-walnut-staunton.jpg)
 
 ## Requirements
 
