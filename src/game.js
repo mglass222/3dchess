@@ -38,6 +38,24 @@ export class Game {
       .some((m) => m.to === to && m.flags.includes('p'));
   }
 
+  // Destination squares from `square` that capture something. Derived from
+  // chess.js's verbose moves rather than "is there a piece on the target",
+  // because en passant captures a pawn that is NOT on the destination square —
+  // chess.js still sets `captured` on that move, so this gets ep right for free.
+  // legalTargets deliberately keeps returning plain strings: making it return
+  // richer objects would ripple into input.js's targets.includes(square) and
+  // every assertion in game.test.js / input.test.js for no gain.
+  captureTargets(square) {
+    const moves = this.chess.moves({ square, verbose: true });
+    return [...new Set(moves.filter((m) => m.captured).map((m) => m.to))];
+  }
+
+  // Square of `color`'s king ('e1'), or null. chess.js rejects a FEN with a
+  // missing king, so the null branch is defensive only.
+  kingSquare(color = this.turn()) {
+    return this.chess.findPiece({ type: 'k', color })[0] ?? null;
+  }
+
   // Applies a move. Returns the change-set on success, or null if illegal.
   makeMove({ from, to, promotion }) {
     let move;
@@ -53,6 +71,13 @@ export class Game {
 
   fen() {
     return this.chess.fen();
+  }
+
+  // SAN move list from the start of the game (chess.js's own re-derivation),
+  // so a board rebuild can re-derive the move list the same way
+  // syncBoardFromGame re-derives the pieces.
+  history() {
+    return this.chess.history();
   }
 
   isCheck() { return this.chess.isCheck(); }
@@ -77,6 +102,13 @@ export class Game {
       castle: null,
       promotion: m.promotion ?? null,
       fenAfter: m.after,
+      san: m.san,
+      // FEN's fullmove field increments after Black moves, not after White's,
+      // so it already counts "the move number Black just finished" one too
+      // high from White's perspective — subtract 1 for Black to get the ply
+      // pair's shared move number. Verified against chess.js 1.4.0 directly:
+      // White's move N leaves fullmove==N; Black's move N leaves fullmove==N+1.
+      moveNumber: Number(m.after.split(' ')[5]) - (m.color === 'b' ? 1 : 0),
     };
 
     if (m.flags.includes('e')) {

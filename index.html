@@ -11,12 +11,29 @@
       #app { position: fixed; inset: 0; }
       #scene { position: absolute; inset: 0; }
       #scene canvas { display: block; }
+      /* A vignette is a lens/print effect, so it belongs in display space, not
+         baked into the render. The three.js addon VignetteShader is unusable
+         here: it mixes toward a constant grey, which BRIGHTENS the corners of
+         this dark scene instead of darkening them. Plain CSS over the canvas
+         gets the darkening without a shader pass or a composer dependency. */
+      #vignette { position: absolute; inset: 0; pointer-events: none;
+            background: radial-gradient(ellipse 78% 78% at 50% 48%,
+              rgba(0,0,0,0) 42%, rgba(0,0,0,0) 62%, rgba(0,0,0,0.30) 100%); }
+      /* WARNING: do not add `filter`, `opacity < 1`, `transform`, or
+         `will-change` to #app. The UI panel injected by ui.js uses
+         backdrop-filter to read as glass, sampling everything painted
+         beneath it in #app's stacking context - this canvas plus the
+         vignette above. Any of those four properties on #app creates a new
+         containing block/stacking context that breaks that sampling chain,
+         so the panel would stop showing the scene through it. */
     </style>
   </head>
   <body>
     <div id="app">
       <div id="scene"></div>
-      <!-- UI overlay is injected by ui.js into #app -->
+      <div id="vignette"></div>
+      <!-- UI overlay is injected by ui.js into #app, after #vignette, so status
+           text and other overlay controls stay crisp above the darkened edges -->
     </div>
     <script type="module" src="/src/main.js"></script>
   </body>

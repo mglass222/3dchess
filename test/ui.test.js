@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { statusText } from '../src/ui.js';
+import { statusText, formatMoveList, isNearScrollEnd } from '../src/ui.js';
 
 // Minimal fake game exposing only what statusText reads.
 function g({ turn = 'w', check = false, checkmate = false, stalemate = false, draw = false }) {
@@ -30,5 +30,36 @@ describe('statusText', () => {
   it('announces stalemate and draw', () => {
     expect(statusText(g({ stalemate: true }))).toBe('Stalemate — draw');
     expect(statusText(g({ draw: true }))).toBe('Draw');
+  });
+});
+
+describe('formatMoveList', () => {
+  it('pairs plies into { n, white, black } rows', () => {
+    expect(formatMoveList(['e4', 'e5', 'Nf3'])).toEqual([
+      { n: 1, white: 'e4', black: 'e5' },
+      { n: 2, white: 'Nf3', black: null },
+    ]);
+  });
+
+  it('returns an empty list for no history', () => {
+    expect(formatMoveList([])).toEqual([]);
+  });
+
+  it('pairs a fully complete history with no trailing odd move', () => {
+    expect(formatMoveList(['e4', 'e5', 'Nf3', 'Nc6'])).toEqual([
+      { n: 1, white: 'e4', black: 'e5' },
+      { n: 2, white: 'Nf3', black: 'Nc6' },
+    ]);
+  });
+});
+
+describe('isNearScrollEnd', () => {
+  it('keeps an empty or bottom-pinned move list following new moves', () => {
+    expect(isNearScrollEnd({ scrollHeight: 0, scrollTop: 0, clientHeight: 0 })).toBe(true);
+    expect(isNearScrollEnd({ scrollHeight: 200, scrollTop: 97, clientHeight: 100 })).toBe(true);
+  });
+
+  it('preserves the position of a user who has scrolled up', () => {
+    expect(isNearScrollEnd({ scrollHeight: 200, scrollTop: 40, clientHeight: 100 })).toBe(false);
   });
 });

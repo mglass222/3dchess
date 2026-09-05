@@ -8,6 +8,12 @@ import {
   PIECE_SETS,
   PIECE_TYPES,
   getPieceMaterial,
+  setPieceEnvironmentMap,
+  setPieceEnvIntensity,
+  unwrapSeamTriangles,
+  GRAIN_ARC_SCALE,
+  GRAIN_HEIGHT_SCALE,
+  TARGET_KING_HEIGHT,
 } from '../src/pieces.js';
 
 function fakeTemplate(height = 1) {
@@ -36,6 +42,24 @@ function namedMesh(obj, name) {
     if (!mesh && c.isMesh && c.name === name) mesh = c;
   });
   return mesh;
+}
+function firstMesh(obj) {
+  let mesh = null;
+  obj.traverse((c) => {
+    if (!mesh && c.isMesh) mesh = c;
+  });
+  return mesh;
+}
+function uvSpanY(geometry) {
+  const uv = geometry.getAttribute('uv');
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < uv.count; i++) {
+    const v = uv.getY(i);
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  return max - min;
 }
 
 describe('pieces', () => {
@@ -109,37 +133,41 @@ describe('pieces', () => {
     expect(blue.vertexColors).toBe(false);
     expect(white.map).toBeInstanceOf(THREE.DataTexture);
     expect(blue.map).toBeInstanceOf(THREE.DataTexture);
-    expect(white.userData.woodGrain).toMatchObject({ baseHex: 0xe6d3b6, grainHex: 0xf2e3ca });
-    expect(blue.userData.woodGrain).toMatchObject({ baseHex: 0x2c65a8, grainHex: 0x74a7df });
+    expect(white.userData.woodGrain).toMatchObject({ baseHex: 0xd4aa68, grainHex: 0xe3b670 });
+    expect(blue.userData.woodGrain).toMatchObject({ baseHex: 0x1f4e83, grainHex: 0x245a97 });
+
+    // The hexes above are a tuning knob and will move again whenever the
+    // render is re-measured. The base:grain LUMINANCE ratio is not - it is what
+    // gives each set the same grain depth, and it was set deliberately after a
+    // 1.71-vs-1.073 mismatch made the blue read as marbled porcelain rather
+    // than stained wood. Assert the constraint, not just the current values.
+    const luma = (hex) => 0.2126 * ((hex >> 16) & 255)
+      + 0.7152 * ((hex >> 8) & 255)
+      + 0.0722 * (hex & 255);
+    const ratio = ({ baseHex, grainHex }) => luma(grainHex) / luma(baseHex);
+    expect(ratio(white.userData.woodGrain)).toBeCloseTo(1.073, 2);
+    expect(ratio(blue.userData.woodGrain)).toBeCloseTo(1.15, 2);
     expect(white.roughness).toBeCloseTo(0.26, 5);
     expect(blue.roughness).toBeCloseTo(0.23, 5);
     expect(white.clearcoat).toBeCloseTo(0.55, 5);
     expect(blue.clearcoat).toBeCloseTo(0.62, 5);
     expect(white.sheenColor.getHex()).toBe(0xffefd6);
     expect(blue.sheenColor.getHex()).toBe(0xb3d2f6);
+    expect(white.envMapIntensity).toBeCloseTo(0.9, 5);
+    expect(blue.envMapIntensity).toBeCloseTo(1.0, 5);
   });
 
-  it('adds classic detail meshes to each piece family', () => {
+  it('does not attach procedural detail meshes', () => {
     for (const type of PIECE_TYPES) _setTemplate(type, fakeTemplate(1));
 
-    expect(detailNames(createPiece('p', 'w'))).toContain('pawn-head-collar');
-    expect(detailNames(createPiece('r', 'w'))).toContain('rook-crenellation');
-    expect(detailNames(createPiece('k', 'w'))).toContain('king-cross-arm');
-    expect(detailNames(createPiece('q', 'w'))).toContain('queen-crown-jewel');
-    expect(detailNames(createPiece('b', 'w'))).toContain('bishop-head-ring');
-    expect(detailNames(createPiece('n', 'w'))).toContain('knight-mane-carving');
-    expect(detailNames(createPiece('p', 'w'))).toContain('felt-pad');
+    for (const type of PIECE_TYPES) {
+      const piece = createPiece(type, 'w');
+      expect(detailNames(piece)).toEqual([]);
+      expect(namedMesh(piece, 'felt-pad')).toBeNull();
+    }
   });
 
-  it('uses black felt pads under the pieces', () => {
-    _setTemplate('p', fakeTemplate(1));
-    const felt = namedMesh(createPiece('p', 'w'), 'felt-pad');
-
-    expect(felt).toBeInstanceOf(THREE.Mesh);
-    expect(felt.material.color.getHex()).toBe(0x050505);
-  });
-
-  it('wraps wood texture coordinates onto original and detail mesh geometry', () => {
+  it('wraps wood texture coordinates onto model mesh geometry', () => {
     _setTemplate('n', fakeTemplate(1));
     const knight = createPiece('n', 'w');
     const meshUvCounts = [];
@@ -150,8 +178,87 @@ describe('pieces', () => {
       }
     });
 
-    expect(meshUvCounts.length).toBeGreaterThan(1);
-    expect(meshUvCounts.every((count) => count > 0)).toBe(true);
+    expect(meshUvCounts.length).toBe(1);
+    expect(meshUvCounts[0]).toBeGreaterThan(0);
+  });
+
+  it('scales grain consistently across piece types by world height', () => {
+    _setTemplate('p', fakeTemplate(0.6));
+    _setTemplate('k', fakeTemplate(1.4));
+
+    const pawnSpan = uvSpanY(firstMesh(createPiece('p', 'w')).geometry);
+    const kingSpan = uvSpanY(firstMesh(createPiece('k', 'w')).geometry);
+
+    // Absolute span, not just the ratio: a bug that scales every piece by the
+    // same wrong factor (e.g. reading pre-normalizeModel mesh-local
+    // coordinates instead of piece-root-space ones) preserves this ratio
+    // while still being off by ~15x in practice, so the ratio alone doesn't
+    // catch it.
+    expect(pawnSpan).toBeCloseTo(0.6 / GRAIN_HEIGHT_SCALE, 5);
+    expect(kingSpan).toBeCloseTo(1.4 / GRAIN_HEIGHT_SCALE, 5);
+    expect(kingSpan / pawnSpan).toBeCloseTo(1.4 / 0.6, 1);
+  });
+
+  it('scales grain by world height for a real (non-identity) piece-root transform', async () => {
+    // fakeTemplate-via-_setTemplate above bypasses loadPieces/normalizeModel
+    // entirely, so its piece-root transform is identity and wouldn't catch a
+    // bug in the mesh-local -> piece-root matrix math itself. Route through
+    // the real default-set (separate-files) load path, which applies
+    // normalizeModel's actual uniform scale, to exercise that math.
+    const scenes = { p: fakeTemplate(0.5), k: fakeTemplate(2) };
+    const loader = { async loadAsync(url) {
+      const type = Object.keys(PIECE_SETS.default.files)
+        .find((t) => url.endsWith(`${PIECE_SETS.default.files[t]}.glb`));
+      return { scene: (scenes[type] ?? fakeTemplate(1)).clone(true) };
+    } };
+
+    await loadPieces({ set: 'default', baseUrl: '/', loader });
+
+    const pawn = createPiece('p', 'w');
+    const king = createPiece('k', 'w');
+    const pawnHeight = height(pawn);
+    const kingHeight = height(king);
+
+    expect(kingHeight).toBeCloseTo(1.4, 5); // TARGET_KING_HEIGHT
+    expect(uvSpanY(firstMesh(pawn).geometry)).toBeCloseTo(pawnHeight / GRAIN_HEIGHT_SCALE, 4);
+    expect(uvSpanY(firstMesh(king).geometry)).toBeCloseTo(kingHeight / GRAIN_HEIGHT_SCALE, 4);
+  });
+
+  it('never lets a normalized template exceed the king\'s own target height', async () => {
+    // loadPieces derives ONE uniform scale from the king's raw height and
+    // applies it to every type (see TARGET_KING_HEIGHT / normalizeModel), so
+    // this only holds if the king's raw model is the tallest in the set -
+    // nothing asserts that at the source. This test makes normalizeModel's
+    // contract explicit for a representative set (every other type's raw
+    // height at or below the king's, as both shipped sets are), so a future
+    // asset regression (e.g. a queen model taller than the king) is caught
+    // here rather than surfacing as a piece poking through the board mid-
+    // capture (see src/scene.js's CAPTURE_SINK derivation, which no longer
+    // strictly depends on this holding, but should never need to rely on its
+    // fallback for the shipped sets).
+    const rawHeights = { p: 0.5, n: 0.7, b: 0.8, r: 0.9, q: 0.95, k: 1.0 };
+    const loader = { async loadAsync(url) {
+      const type = Object.keys(PIECE_SETS.default.files)
+        .find((t) => url.endsWith(`${PIECE_SETS.default.files[t]}.glb`));
+      return { scene: fakeTemplate(rawHeights[type] ?? 1) };
+    } };
+
+    await loadPieces({ set: 'default', baseUrl: '/', loader });
+
+    for (const type of PIECE_TYPES) {
+      expect(height(createPiece(type, 'w'))).toBeLessThanOrEqual(TARGET_KING_HEIGHT + 1e-9);
+    }
+  });
+
+  it('does not bake UVs into a shared template geometry', () => {
+    const template = fakeTemplate(1);
+    _setTemplate('r', template);
+    const templateGeometry = firstMesh(template).geometry;
+
+    const piece = createPiece('r', 'w');
+
+    expect(firstMesh(piece).geometry).not.toBe(templateGeometry);
+    expect(templateGeometry.userData.pieceInstanceGeometry).toBeUndefined();
   });
 
   it('assigns the shared premium material to every original model mesh in a clone', () => {
@@ -160,7 +267,7 @@ describe('pieces', () => {
     const blue = getPieceMaterial('b');
 
     piece.traverse((child) => {
-      if (child.isMesh && !child.userData.pieceDetail) {
+      if (child.isMesh && !child.userData.isContactShadow) {
         expect(child.material).toBe(blue);
         expect(child.castShadow).toBe(true);
         expect(child.receiveShadow).toBe(true);
@@ -168,16 +275,51 @@ describe('pieces', () => {
     });
   });
 
+  it('gives every piece a contact-shadow decal sharing one geometry and material', () => {
+    _setTemplate('p', fakeTemplate(0.5));
+    _setTemplate('r', fakeTemplate(1));
+
+    const pawn = createPiece('p', 'w');
+    const rook = createPiece('r', 'b');
+    const pawnShadow = namedMesh(pawn, 'contact-shadow');
+    const rookShadow = namedMesh(rook, 'contact-shadow');
+
+    expect(pawnShadow).not.toBeNull();
+    expect(rookShadow).not.toBeNull();
+    expect(pawnShadow.geometry).toBe(rookShadow.geometry);
+    expect(pawnShadow.material).toBe(rookShadow.material);
+    // Guards scene.js's disposePieceGeometries contract: this geometry is a
+    // shared, long-lived singleton and must never be flagged for per-piece
+    // disposal, or the first captured piece would free it out from under
+    // every other piece still on the board.
+    expect(pawnShadow.geometry.userData.pieceInstanceGeometry).toBeUndefined();
+  });
+
+  it('grounds the contact shadow, unlit and inside its own square', () => {
+    _setTemplate('q', fakeTemplate(1.2));
+    const queen = createPiece('q', 'w');
+    const shadow = namedMesh(queen, 'contact-shadow');
+
+    expect(shadow.rotation.x).toBeCloseTo(-Math.PI / 2, 5);
+    expect(shadow.position.y).toBeGreaterThan(0);
+    expect(shadow.position.y).toBeLessThan(0.02);
+    expect(shadow.castShadow).toBe(false);
+    expect(shadow.material.depthWrite).toBe(false);
+
+    queen.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(shadow);
+    const size = box.getSize(new THREE.Vector3());
+    expect(Math.max(size.x, size.z)).toBeLessThanOrEqual(0.95);
+  });
+
   it('describes isolated default and downloaded model sets', () => {
     expect(PIECE_SETS.default).toMatchObject({
       mode: 'separate-files',
       directory: 'models/Default',
-      addClassicDetails: true,
     });
     expect(PIECE_SETS.downloaded).toMatchObject({
       mode: 'combined-scene',
       file: 'models/Downloaded/realistic_chess_set_3d_model.glb',
-      addClassicDetails: false,
     });
     expect(Object.keys(PIECE_SETS.downloaded.nodes).sort()).toEqual([...PIECE_TYPES].sort());
   });
@@ -227,5 +369,78 @@ describe('pieces', () => {
     const pawn = createPiece('p', 'w');
 
     expect(height(pawn)).toBeCloseTo(2.1, 5);
+    // Cross-set check for FIX 2: the Downloaded set's ancestor scale (y*3,
+    // baked into the node's own transform by cloneWithWorldTransform before
+    // normalizeModel ever runs) must still be reflected in the UV height,
+    // exactly like the Default set's uniform scale is. A bug that reads raw
+    // mesh-local vertices (pre-bake, pre-normalizeModel) would produce a v
+    // span based on height 1 (the fakeTemplate's untransformed geometry),
+    // not the actual grounded height of 2.1.
+    expect(uvSpanY(firstMesh(pawn).geometry)).toBeCloseTo(height(pawn) / GRAIN_HEIGHT_SCALE, 4);
+  });
+
+  it('unwrapSeamTriangles pushes only the seam-crossing corner, by that corner\'s own 2*PI*r', () => {
+    // One triangle whose u-span straddles the atan2 branch cut (u driven by
+    // radius per grainU, so different vertices can carry different radii).
+    // Vertex 0 sits on the low side of the seam and should be the only one
+    // pushed forward, by its own 2*PI*r/GRAIN_ARC_SCALE - not vertex 1's or
+    // vertex 2's radius.
+    const radii = [2, 1, 1];
+    const uvs = new Float32Array([-3, 0, 3, 0, 0, 0]); // v (odd indices) is irrelevant here
+    const originalU0 = uvs[0];
+
+    unwrapSeamTriangles(uvs, radii);
+
+    const expectedPush = (2 * Math.PI * radii[0]) / GRAIN_ARC_SCALE;
+    expect(uvs[0]).toBeCloseTo(originalU0 + expectedPush, 5);
+    expect(uvs[2]).toBeCloseTo(3, 5); // untouched: already on the high side
+    expect(uvs[4]).toBeCloseTo(0, 5); // untouched: not below the triangle's u midpoint
+
+    // A triangle that doesn't cross the seam is left alone entirely.
+    const smallSpanRadii = [1, 1, 1];
+    const smallSpanUvs = new Float32Array([-0.1, 0, 0.1, 0, 0, 0]);
+    const untouched = smallSpanUvs.slice();
+    unwrapSeamTriangles(smallSpanUvs, smallSpanRadii);
+    expect(smallSpanUvs).toEqual(untouched);
+  });
+
+  it('setPieceEnvironmentMap assigns a live envMap to both shared piece materials', () => {
+    const texture = new THREE.Texture();
+    const white = getPieceMaterial('w');
+    const blue = getPieceMaterial('b');
+    const versionBefore = { w: white.version, b: blue.version };
+
+    setPieceEnvironmentMap(texture);
+
+    expect(white.envMap).toBe(texture);
+    expect(blue.envMap).toBe(texture);
+    // `needsUpdate` is a write-only setter (no getter) that bumps `.version`
+    // when set true - version increasing is the observable proof the shader
+    // will actually recompile with USE_ENVMAP defined.
+    expect(white.version).toBeGreaterThan(versionBefore.w);
+    expect(blue.version).toBeGreaterThan(versionBefore.b);
+  });
+
+  it('setPieceEnvIntensity scales from each material\'s own captured base, round-tripping back to 0.9/1.0', () => {
+    // white/blue are shared, long-lived singletons (MATERIALS) — another test
+    // above asserts them at exactly 0.9/1.0, so this must leave them there
+    // when it's done, or it becomes order-dependent against that test.
+    const white = getPieceMaterial('w');
+    const blue = getPieceMaterial('b');
+    try {
+      setPieceEnvIntensity(1.2);
+      expect(white.envMapIntensity).toBeCloseTo(0.9 * 1.2, 5);
+      expect(blue.envMapIntensity).toBeCloseTo(1.0 * 1.2, 5);
+
+      setPieceEnvIntensity(0.9);
+      expect(white.envMapIntensity).toBeCloseTo(0.9 * 0.9, 5);
+      expect(blue.envMapIntensity).toBeCloseTo(1.0 * 0.9, 5);
+
+      setPieceEnvIntensity(1.0);
+      expect(white.envMapIntensity).toBeCloseTo(0.9, 5);
+      expect(blue.envMapIntensity).toBeCloseTo(1.0, 5);
+    } finally {
+      setPieceEnvIntensity(1); // reset the shared singletons for later tests
+    }
   });
 });
