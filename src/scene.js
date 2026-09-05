@@ -754,7 +754,7 @@ export class Scene {
   // built through some path other than pieces.js#createPiece (or a test
   // stub) carries no userData.type, so moveProfile falls back to
   // MOVE_DEFAULT - today's original numbers, byte-identical, with settle 0.
-  movePiece(from, to) {
+  movePiece(from, to, { onLand } = {}) {
     const obj = this.pieces.get(from);
     if (!obj) return Promise.resolve();
     this.pieces.delete(from);
@@ -778,6 +778,7 @@ export class Scene {
     // moveDuration drops the distance term for MOVE_DEFAULT itself.
     const duration = moveDuration(type, worldDistance); // ms
     const t0 = performance.now();
+    let landed = false;
     return new Promise((resolve) => {
       const step = (now) => {
         if (obj.userData._moveGen !== myGen || this._boardGen !== myBoardGen) {
@@ -817,6 +818,10 @@ export class Scene {
         // decal stays welded for free, the same path the capture shrink
         // already exercises.
         obj.position.set(end.x, 0, end.z);
+        if (!landed) {
+          landed = true;
+          onLand?.();
+        }
         const settleElapsed = elapsed - duration;
         if (settle > 0 && settleElapsed < MOVE_SETTLE_MS) {
           const s = settleElapsed / MOVE_SETTLE_MS;

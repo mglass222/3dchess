@@ -7,18 +7,26 @@ import { createUI, statusText } from './ui.js';
 import { createPiece, loadPieces } from './pieces.js';
 import { allSquares } from './coords.js';
 import { capturedFromFen } from './material.js';
+import { PieceSounds } from './sound.js';
 
 const appEl = document.getElementById('app');
 const sceneEl = document.getElementById('scene');
 
 const scene = new Scene(sceneEl);
 const game = new Game();
+const sounds = new PieceSounds();
+void sounds.preload();
 const ui = createUI(appEl, {
   onNewGame,
   onSkillChange,
   onThemeChange,
   onPieceSetChange,
+  onSoundChange: (enabled) => sounds.setEnabled(enabled),
 });
+ui.setSoundEnabled(sounds.enabled);
+document.addEventListener('pointerdown', () => { void sounds.unlock(); }, { capture: true });
+document.addEventListener('keydown', () => { void sounds.unlock(); }, { capture: true });
+document.addEventListener('visibilitychange', () => { if (document.hidden) sounds.stop(); });
 const input = new Input(scene, game, { onPromotion: (color) => ui.showPromotion(color) });
 
 const ai = new AI(createEngine(), { skill: ui.getSkill(), movetime: 1000 });
@@ -103,12 +111,22 @@ async function onMove(change) {
           // game's own rook) - bail out the same way the code below already
           // does for the king/capture pair.
           if (myGame !== gameId) { resolve(); return; }
-          resolve(scene.movePiece(change.castle.rookFrom, change.castle.rookTo));
+          resolve(scene.movePiece(change.castle.rookFrom, change.castle.rookTo, {
+            onLand: () => {
+              if (myGame === gameId) sounds.playLanding({ piece: 'r', file: change.castle.rookTo.charCodeAt(0) - 97 });
+            },
+          }));
         }, kingDuration * 0.55);
       });
     }
 
-    await Promise.all([scene.movePiece(change.from, change.to), capture, rookMove]);
+    await Promise.all([scene.movePiece(change.from, change.to, {
+      onLand: () => {
+        if (myGame === gameId) sounds.playLanding({
+          piece: change.piece.type, capture: Boolean(change.captured), file: change.to.charCodeAt(0) - 97,
+        });
+      },
+    }), capture, rookMove]);
     if (myGame !== gameId) return; // a New Game landed while we were animating
 
     if (change.promotion) {
