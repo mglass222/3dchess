@@ -1236,6 +1236,27 @@ describe('move profiles and settle', () => {
     expect(knight.scale.z).toBe(1);
   }));
 
+  it('fires a landing once at contact, and suppresses landings canceled by New Game', () => withFakeClock(({ queue, advance }) => {
+    const scene = makeSceneStub();
+    const knight = makeTypedPiece('b1', 'n');
+    scene.pieces.set('b1', knight);
+    const landings = [];
+    scene.movePiece('b1', 'c3', { onLand: () => landings.push(knight.position.y) });
+    const duration = moveDuration('n', Math.hypot(1, 2));
+    advance(duration - 1);
+    queue.shift()(performance.now());
+    expect(landings).toEqual([]);
+    advance(2); // first frame beyond contact, avoiding a floating-point boundary
+    queue.shift()(performance.now());
+    expect(landings).toEqual([0]);
+    drainAll(queue, advance);
+    expect(landings).toEqual([0]);
+    scene.movePiece('c3', 'b1', { onLand: () => landings.push('stale') });
+    scene.clearPieces();
+    drainAll(queue, advance);
+    expect(landings).toEqual([0]);
+  }));
+
   it('supersede DURING the settle (not just mid-arc): scale is restored to exactly 1, the decal stays grounded, and the promise resolves', () => withFakeClock(({ queue, advance }) => {
     const scene = makeSceneStub();
     const knight = makeTypedPiece('b1', 'n');

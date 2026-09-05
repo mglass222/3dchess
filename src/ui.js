@@ -46,7 +46,7 @@ function describeCaptured(map) {
 }
 
 // Builds the HTML overlay and returns handles the app uses to drive it.
-// handlers: { onNewGame(side, skill), onSkillChange(skill), onThemeChange, onPieceSetChange }
+// handlers: { onNewGame(side, skill), onSkillChange(skill), onThemeChange, onPieceSetChange, onSoundChange }
 export function createUI(container, handlers) {
   const root = document.createElement('div');
   root.id = 'ui';
@@ -204,6 +204,7 @@ export function createUI(container, handlers) {
         <label>Pieces
           <select id="pieceset"></select>
         </label>
+        <button id="sound" type="button" aria-pressed="true" aria-label="Move sounds">Sound: On</button>
         <span class="status" id="status" role="status" aria-live="polite">White to move</span>
       </div>
       <div class="extras">
@@ -236,6 +237,16 @@ export function createUI(container, handlers) {
   const sideEl = root.querySelector('#side');
   const themeEl = root.querySelector('#theme');
   const pieceSetEl = root.querySelector('#pieceset');
+  const soundEl = root.querySelector('#sound');
+  function setSoundEnabled(enabled) {
+    soundEl.setAttribute('aria-pressed', String(enabled));
+    soundEl.textContent = enabled ? 'Sound: On' : 'Sound: Off';
+  }
+  soundEl.addEventListener('click', () => {
+    const enabled = soundEl.getAttribute('aria-pressed') !== 'true';
+    setSoundEnabled(enabled);
+    handlers.onSoundChange?.(enabled);
+  });
   const trayWEl = root.querySelector('#trayW');
   const trayBEl = root.querySelector('#trayB');
   const advantageEl = root.querySelector('#advantage');
@@ -301,6 +312,7 @@ export function createUI(container, handlers) {
   }
 
   return {
+    setSoundEnabled,
     setStatus(text) { statusEl.textContent = text; },
     setThinking(on) { statusEl.classList.toggle('thinking', on); if (on) statusEl.textContent = 'Computer is thinking…'; },
     // Wholesale replace: the one path a board resync (New Game, piece-set
