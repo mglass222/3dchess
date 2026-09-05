@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { statusText, formatMoveList } from '../src/ui.js';
+import { statusText, formatMoveList, isNearScrollEnd } from '../src/ui.js';
 
 // Minimal fake game exposing only what statusText reads.
 function g({ turn = 'w', check = false, checkmate = false, stalemate = false, draw = false }) {
@@ -50,5 +50,16 @@ describe('formatMoveList', () => {
       { n: 1, white: 'e4', black: 'e5' },
       { n: 2, white: 'Nf3', black: 'Nc6' },
     ]);
+  });
+});
+
+describe('isNearScrollEnd', () => {
+  it('keeps an empty or bottom-pinned move list following new moves', () => {
+    expect(isNearScrollEnd({ scrollHeight: 0, scrollTop: 0, clientHeight: 0 })).toBe(true);
+    expect(isNearScrollEnd({ scrollHeight: 200, scrollTop: 97, clientHeight: 100 })).toBe(true);
+  });
+
+  it('preserves the position of a user who has scrolled up', () => {
+    expect(isNearScrollEnd({ scrollHeight: 200, scrollTop: 40, clientHeight: 100 })).toBe(false);
   });
 });

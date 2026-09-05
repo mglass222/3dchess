@@ -16,6 +16,12 @@ import {
 } from '../src/postfx.js';
 import { THEMES } from '../src/themes.js';
 
+function hexFractions(hex) {
+  const value = parseInt(hex.slice(1), 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255]
+    .map((channel) => channel / 255);
+}
+
 describe('postfx', () => {
   it('ports the ACES tonemap accurately enough to reproduce the Tier-1 browser measurements', () => {
     // These are the actual measured on-screen values from the Tier-1 pass
@@ -74,11 +80,7 @@ describe('postfx', () => {
     const clipped = [];
     for (const hex of endpoints) {
       const { channels } = preToneMapCompensate(hex);
-      const originalChannels = [
-        (parseInt(hex.slice(1), 16) >> 16) & 255,
-        (parseInt(hex.slice(1), 16) >> 8) & 255,
-        parseInt(hex.slice(1), 16) & 255,
-      ].map((c) => c / 255);
+      const originalChannels = hexFractions(hex);
 
       if (channels.some((c) => c < 0 || c > 1)) clipped.push(hex);
 
@@ -102,11 +104,7 @@ describe('postfx', () => {
     // the actual residual/iteration count instead of just "didn't throw".
     const endpoints = THEMES.flatMap((t) => [t.top, t.bottom]);
     for (const hex of endpoints) {
-      const targetDisplay = [
-        (parseInt(hex.slice(1), 16) >> 16) & 255,
-        (parseInt(hex.slice(1), 16) >> 8) & 255,
-        parseInt(hex.slice(1), 16) & 255,
-      ].map((c) => c / 255);
+      const targetDisplay = hexFractions(hex);
       const targetLinear = targetDisplay.map((c) => sRGBToLinear(c));
 
       const {
@@ -126,6 +124,13 @@ describe('postfx', () => {
       expect(c).toBeGreaterThan(original);
     });
     expect(hex).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  it('formats out-of-range compensation as valid CSS while retaining raw channels for clipping diagnostics', () => {
+    const { hex, channels } = preToneMapCompensate('#ffffff');
+
+    expect(channels.some((channel) => channel > 1)).toBe(true);
+    expect(hex).toBe('#ffffff');
   });
 
   it('chooseSamples steps down MSAA at its two boundaries', () => {

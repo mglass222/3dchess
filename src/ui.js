@@ -25,6 +25,10 @@ export function formatMoveList(sanArray) {
   return rows;
 }
 
+export function isNearScrollEnd({ scrollHeight, scrollTop, clientHeight }, threshold = 4) {
+  return scrollHeight - scrollTop - clientHeight < threshold;
+}
+
 // Ascending value order, matching how a physical captured-piece tray is read.
 const CAPTURE_TYPES = ['p', 'n', 'b', 'r', 'q'];
 const CAPTURE_NOUN = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen' };
@@ -269,6 +273,7 @@ export function createUI(container, handlers) {
   }
 
   function renderMoveList() {
+    const pinned = isNearScrollEnd(movelistEl);
     movelistEl.innerHTML = '';
     for (const row of formatMoveList(historySan)) {
       const li = document.createElement('li');
@@ -284,8 +289,9 @@ export function createUI(container, handlers) {
       li.append(n, white, black);
       movelistEl.appendChild(li);
     }
-    // Keep the newest plies in view rather than scrolled off past the fixed height.
-    movelistEl.scrollTop = movelistEl.scrollHeight;
+    // Keep the newest plies in view only when the user was already following
+    // the end; preserve their position when they scroll up to review the game.
+    if (pinned) movelistEl.scrollTop = movelistEl.scrollHeight;
   }
 
   return {
@@ -328,6 +334,20 @@ export function createUI(container, handlers) {
       const invoker = document.activeElement;
       return new Promise((resolve) => {
         let firstBtn = null;
+        const buttons = [];
+        const trapFocus = (event) => {
+          if (event.key !== 'Tab' || buttons.length === 0) return;
+          const first = buttons[0];
+          const last = buttons[buttons.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        };
+        promoBox.addEventListener('keydown', trapFocus);
         for (const t of ['q', 'r', 'b', 'n']) {
           const btn = document.createElement('button');
           btn.textContent = GLYPH[t];
@@ -339,11 +359,13 @@ export function createUI(container, handlers) {
           // still reads as "the blue side" while staying legible.
           btn.style.color = color === 'w' ? '#f4ecd8' : '#8fbdf0';
           btn.addEventListener('click', () => {
+            promoBox.removeEventListener('keydown', trapFocus);
             promo.style.display = 'none';
             if (invoker && typeof invoker.focus === 'function') invoker.focus();
             resolve(t);
           });
           promoBox.appendChild(btn);
+          buttons.push(btn);
           if (!firstBtn) firstBtn = btn;
         }
         // Move focus into the modal so keyboard/screen-reader users land on

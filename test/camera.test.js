@@ -92,7 +92,7 @@ describe('sphericalOf / applyOrbit', () => {
     const { radius, phi, theta } = sphericalOf(camera, target);
 
     expect(radius).toBeCloseTo(12.728, 3);
-    expect(phi).toBe(Math.PI / 4);
+    expect(phi).toBeCloseTo(Math.PI / 4, 12);
     expect(theta).toBe(0);
   });
 });

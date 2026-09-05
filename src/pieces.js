@@ -487,13 +487,13 @@ function applyWoodTextureCoordinates(mesh, localToRoot) {
 
   const positions = geometry.attributes.position;
   const uvs = new Float32Array(positions.count * 2);
-  const radii = new Float32Array(positions.count);
+  const radii = splitSeams ? new Float32Array(positions.count) : null;
   const position = new THREE.Vector3();
 
   for (let i = 0; i < positions.count; i++) {
     position.fromBufferAttribute(positions, i);
     position.applyMatrix4(localToRoot);
-    radii[i] = Math.hypot(position.x, position.z);
+    if (radii) radii[i] = Math.hypot(position.x, position.z);
     uvs[i * 2] = grainU(position.x, position.z);
     // Height in piece-root space (see localToRoot above): normalizeModel
     // already grounds every template at y=0 and scales it to board-square

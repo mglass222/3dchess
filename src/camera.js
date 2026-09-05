@@ -159,7 +159,7 @@ export class CameraFlight {
 
     // The sole abort seam - see the module doc comment above for why this is
     // the right (and only) event to listen for.
-    this.controls?.addEventListener?.('start', () => this.cancel());
+    this.controls.addEventListener('start', () => this.cancel());
   }
 
   // `to`/`from` are { radius, phi, theta } poses (see sphericalOf/applyOrbit).

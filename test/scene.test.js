@@ -1225,7 +1225,8 @@ describe('move profiles and settle', () => {
     let settled = false;
     scene.movePiece('b1', 'c3').then(() => { settled = true; });
 
-    const { duration, settle } = MOVE_PROFILES.n;
+    const { settle } = MOVE_PROFILES.n;
+    const duration = moveDuration('n', Math.hypot(1, 2)); // b1 -> c3
     expect(settle).toBeGreaterThan(0);
 
     // Drain past the arc, one settle half-step into the squash.
@@ -1264,7 +1265,7 @@ describe('move profiles and settle', () => {
     let settled = false;
     scene.movePiece('b1', 'c3').then(() => { settled = true; });
 
-    const { duration } = MOVE_PROFILES.n;
+    const duration = moveDuration('n', Math.hypot(1, 2)); // b1 -> c3
     advance(duration + MOVE_SETTLE_MS / 2);
     queue.shift()(performance.now());
     const squashedScale = knight.scale.y;

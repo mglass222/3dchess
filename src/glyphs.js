@@ -3,6 +3,7 @@
 // only ever evaluated OUTSIDE the stroke, so it's really just "distance to
 // nearest stroke", not a true two-sided SDF - fine, since a groove has no
 // inside to be negative in).
+// coordinates.js is the planned consumer and has not been added yet.
 //
 // REJECTED: canvas fillText(). It rasterises differently per platform/font
 // stack (different hinting, different fallback fonts on a machine without

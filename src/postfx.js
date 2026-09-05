@@ -283,7 +283,8 @@ function hexToChannels(hex) {
 }
 
 function channelsToHex(channels) {
-  return `#${channels.map((c) => Math.round(c).toString(16).padStart(2, '0')).join('')}`;
+  return `#${channels.map((c) => Math.min(255, Math.max(0, Math.round(c)))
+    .toString(16).padStart(2, '0')).join('')}`;
 }
 
 // Pre-compensates a display-space hex color so that, once it is authored into
