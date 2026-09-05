@@ -31,9 +31,9 @@ export const THEMES = [
   {
     key: 'walnut', label: 'Walnut Study', top: '#180f08', bottom: '#5e4029', fog: '#3a281a',
     light: {
-      key: '#ffd9a0', keyIntensity: 1.05,
-      hemiSky: '#ffe8c8', hemiGround: '#3a2a1c', hemiIntensity: 1.15,
-      rim: '#ffb877', rimIntensity: 0.70,
+      key: '#fff2da', keyIntensity: 1.05,
+      hemiSky: '#fff5e5', hemiGround: '#3a2a1c', hemiIntensity: 1.15,
+      rim: '#dfc7a8', rimIntensity: 0.70,
       env: 0.92, exposure: 1.03,
     },
   },

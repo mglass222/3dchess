@@ -121,7 +121,7 @@ describe('pieces', () => {
     expect(height(createPiece('k', 'w'))).toBeGreaterThan(height(createPiece('p', 'w')));
   });
 
-  it('uses glossy wood-grain ivory and blue piece materials', () => {
+  it('uses satin wood-grain ivory and blue piece materials', () => {
     const white = getPieceMaterial('w');
     const blue = getPieceMaterial('b');
 
@@ -133,6 +133,12 @@ describe('pieces', () => {
     expect(blue.vertexColors).toBe(false);
     expect(white.map).toBeInstanceOf(THREE.DataTexture);
     expect(blue.map).toBeInstanceOf(THREE.DataTexture);
+    for (const material of [white, blue]) {
+      expect(material.metalness).toBe(0);
+      expect(material.sheen).toBe(0);
+      expect(material.roughnessMap.colorSpace).toBe(THREE.NoColorSpace);
+      expect(material.roughnessMap.offset).toEqual(material.map.offset);
+    }
     expect(white.userData.woodGrain).toMatchObject({ baseHex: 0xd4aa68, grainHex: 0xe3b670 });
     expect(blue.userData.woodGrain).toMatchObject({ baseHex: 0x1f4e83, grainHex: 0x245a97 });
 
@@ -147,10 +153,10 @@ describe('pieces', () => {
     const ratio = ({ baseHex, grainHex }) => luma(grainHex) / luma(baseHex);
     expect(ratio(white.userData.woodGrain)).toBeCloseTo(1.073, 2);
     expect(ratio(blue.userData.woodGrain)).toBeCloseTo(1.15, 2);
-    expect(white.roughness).toBeCloseTo(0.26, 5);
-    expect(blue.roughness).toBeCloseTo(0.23, 5);
-    expect(white.clearcoat).toBeCloseTo(0.55, 5);
-    expect(blue.clearcoat).toBeCloseTo(0.62, 5);
+    expect(white.roughness).toBeCloseTo(0.34, 5);
+    expect(blue.roughness).toBeCloseTo(0.32, 5);
+    expect(white.clearcoat).toBeCloseTo(0.28, 5);
+    expect(blue.clearcoat).toBeCloseTo(0.32, 5);
     expect(white.sheenColor.getHex()).toBe(0xffefd6);
     expect(blue.sheenColor.getHex()).toBe(0xb3d2f6);
     expect(white.envMapIntensity).toBeCloseTo(0.9, 5);
@@ -219,23 +225,15 @@ describe('pieces', () => {
     const pawnHeight = height(pawn);
     const kingHeight = height(king);
 
-    expect(kingHeight).toBeCloseTo(1.4, 5); // TARGET_KING_HEIGHT
+    expect(kingHeight).toBeCloseTo(1.504347826, 5);
+    expect(pawnHeight).toBeCloseTo(.35, 5);
     expect(uvSpanY(firstMesh(pawn).geometry)).toBeCloseTo(pawnHeight / GRAIN_HEIGHT_SCALE, 4);
     expect(uvSpanY(firstMesh(king).geometry)).toBeCloseTo(kingHeight / GRAIN_HEIGHT_SCALE, 4);
   });
 
-  it('never lets a normalized template exceed the king\'s own target height', async () => {
-    // loadPieces derives ONE uniform scale from the king's raw height and
-    // applies it to every type (see TARGET_KING_HEIGHT / normalizeModel), so
-    // this only holds if the king's raw model is the tallest in the set -
-    // nothing asserts that at the source. This test makes normalizeModel's
-    // contract explicit for a representative set (every other type's raw
-    // height at or below the king's, as both shipped sets are), so a future
-    // asset regression (e.g. a queen model taller than the king) is caught
-    // here rather than surfacing as a piece poking through the board mid-
-    // capture (see src/scene.js's CAPTURE_SINK derivation, which no longer
-    // strictly depends on this holding, but should never need to rely on its
-    // fallback for the shipped sets).
+  it('preserves the shared scale while applying the Default king height adjustment', async () => {
+    // The shared scale still comes from the unadjusted king. Only the king
+    // receives the additional height, so every other piece retains its size.
     const rawHeights = { p: 0.5, n: 0.7, b: 0.8, r: 0.9, q: 0.95, k: 1.0 };
     const loader = { async loadAsync(url) {
       const type = Object.keys(PIECE_SETS.default.files)
@@ -246,7 +244,8 @@ describe('pieces', () => {
     await loadPieces({ set: 'default', baseUrl: '/', loader });
 
     for (const type of PIECE_TYPES) {
-      expect(height(createPiece(type, 'w'))).toBeLessThanOrEqual(TARGET_KING_HEIGHT + 1e-9);
+      const multiplier = PIECE_SETS.default.heightMultipliers[type] ?? 1;
+      expect(height(createPiece(type, 'w'))).toBeCloseTo(rawHeights[type] * TARGET_KING_HEIGHT * multiplier, 5);
     }
   });
 

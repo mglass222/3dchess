@@ -3,7 +3,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 export const PIECE_TYPES = ['p', 'n', 'b', 'r', 'q', 'k'];
 
-// Piece type -> model filename (Ernest Rudnicki "chess-3d" set, MIT).
+// Default Staunton models are authored offline by scripts/build-default-pieces.js.
 const MODEL_FILE = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
 
 export const PIECE_SETS = {
@@ -14,6 +14,8 @@ export const PIECE_SETS = {
     directory: 'models/Default',
     files: MODEL_FILE,
     rotations: { n: Math.PI / 2 },
+    // Align the widest collar rims (authored at y=.805 for king, .865 for queen).
+    heightMultipliers: { k: .865 / .805 },
   },
   downloaded: {
     key: 'downloaded',
@@ -63,8 +65,8 @@ function createTextureCanvas(data, size) {
 
 const TAU = Math.PI * 2;
 
-function createWoodTexture(baseHex, grainHex, seed) {
-  const size = 256; // was 192; the pieces are inspectable close enough to see texels
+function createWoodTexture(baseHex, grainHex, seed, roughnessMap = false) {
+  const size = 512;
   const data = new Uint8Array(size * size * 4);
   const base = colorParts(baseHex);
   const grain = colorParts(grainHex);
@@ -100,9 +102,10 @@ function createWoodTexture(baseHex, grainHex, seed) {
       const shade = 1 - pore ** 4 * 0.10;
 
       const i = (y * size + x) * 4;
-      data[i] = Math.round(color.r * shade);
-      data[i + 1] = Math.round(color.g * shade);
-      data[i + 2] = Math.round(color.b * shade);
+      const roughness = Math.round(224 + band * 24 - pore ** 4 * 8);
+      data[i] = roughnessMap ? roughness : Math.round(color.r * shade);
+      data[i + 1] = roughnessMap ? roughness : Math.round(color.g * shade);
+      data[i + 2] = roughnessMap ? roughness : Math.round(color.b * shade);
       data[i + 3] = 255;
     }
   }
@@ -110,7 +113,7 @@ function createWoodTexture(baseHex, grainHex, seed) {
   const texture = typeof document !== 'undefined' && document.createElement
     ? new THREE.CanvasTexture(createTextureCanvas(data, size))
     : new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
-  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.colorSpace = roughnessMap ? THREE.NoColorSpace : THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.repeat.set(1, 1); // scale now lives in the world-space UVs (applyWoodTextureCoordinates)
@@ -134,6 +137,7 @@ function createWoodMaterial({
   const material = new THREE.MeshPhysicalMaterial({
     color: 0xffffff,
     map: createWoodTexture(baseHex, grainHex, seed),
+    roughnessMap: createWoodTexture(baseHex, grainHex, seed, true),
     roughness,
     metalness,
     clearcoat,
@@ -150,62 +154,28 @@ function createWoodMaterial({
 // Shared, long-lived materials (one per color) applied to every piece clone.
 const MATERIALS = {
   w: createWoodMaterial({
-    // These read far more saturated than the pieces do on screen, deliberately.
-    // The map is the only source of piece colour (material.color is white), and
-    // the IBL, clearcoat and sheen layers all add near-neutral highlight on top,
-    // so much of the map's saturation is washed out by the time it is rendered.
-    // Judge any change to these by the rendered result, not by the swatch — and
-    // note the pair also holds a 1.073 base:grain luminance ratio, matched to
-    // the blue pieces so both sets carry the same grain depth.
-    //
-    // RE-MEASURED after the composer/ACES/theme-lighting passes went in. Those
-    // raised the washout from the ~58% this was originally calibrated against
-    // to ~73%, and the whites drifted back to reading as plain white: 0xe8c48b
-    // (source saturation 0.40) had been landing at 0.19 rendered, and was
-    // measured at 0.109 — nearly back to the 0.08 that was rejected as "plain
-    // white" in the first place. Nothing about the pieces changed; the pipeline
-    // moved underneath them, so expect this to need re-measuring again after
-    // any further work on tone mapping or bloom.
-    //
-    // The response is not linear, because bloom clips the brightest texels and
-    // takes their colour with it: raising source saturation 0.40 -> 0.60 moved
-    // the rendered value 0.109 -> 0.278, well past the target, since the darker
-    // albedo also clipped less. 0.509 lands at 0.219 rendered, which reads as
-    // ivory. Measured over piece pixels only, with the board and table hidden
-    // so the board's cream squares cannot pull the average.
+    // A warm satin finish keeps the carved silhouettes readable under the window.
     baseHex: 0xd4aa68,
     grainHex: 0xe3b670,
     seed: 0.8,
-    roughness: 0.26,
-    metalness: 0.02,
-    clearcoat: 0.55,
+    roughness: 0.34,
+    metalness: 0,
+    clearcoat: 0.28,
     clearcoatRoughness: 0.30,
-    sheen: 0.16,
+    sheen: 0,
     sheenColor: 0xffefd6,
     sheenRoughness: 0.52,
     envMapIntensity: 0.9,
   }),
   b: createWoodMaterial({
     baseHex: 0x1f4e83,
-    // The ratio against the base is the thing to preserve here, not the hex:
-    // this was once 0x74a7df, whose luminance ratio was 1.71 versus the white
-    // pair's 1.073. That 2.4x mismatch was invisible while the UVs were
-    // mis-scaled; once the projection was fixed and the grain actually
-    // resolved, it read as marbled porcelain rather than stained wood. The
-    // pair sits at 1.15 — slightly above white, which a darker stain carries.
-    //
-    // Deepened alongside the whites in the same re-measure. The blue washes out
-    // less than the white does (it is darker, so bloom clips it less), so it
-    // needed less: rendered saturation went 0.463 -> 0.513 and, more to the
-    // point, rendered luminance 0.609 -> 0.513, which is what stops it reading
-    // as pale sky blue rather than a stain.
     grainHex: 0x245a97,
     seed: 4.1,
-    roughness: 0.23,
-    metalness: 0.04,
-    clearcoat: 0.62,
+    roughness: 0.32,
+    metalness: 0,
+    clearcoat: 0.32,
     clearcoatRoughness: 0.28,
-    sheen: 0.1,
+    sheen: 0,
     sheenColor: 0xb3d2f6,
     sheenRoughness: 0.58,
     envMapIntensity: 1.0,
@@ -215,6 +185,7 @@ const MATERIALS = {
 // Decorrelate the blue grain from the white grain (was a geometry-side v-offset;
 // moved to the texture so geometry stays identical between colours).
 MATERIALS.b.map.offset.set(0.31, 0.17);
+MATERIALS.b.roughnessMap.offset.copy(MATERIALS.b.map.offset);
 
 // --- Contact shadow: a decal parented into each piece group, grounding it on
 // the board instead of letting it read as pasted on top. Parenting (rather than
@@ -593,7 +564,12 @@ export async function loadPieces({
   const kingBox = new THREE.Box3().setFromObject(raw.k);
   const scale = TARGET_KING_HEIGHT / (kingBox.max.y - kingBox.min.y);
   const nextTemplates = {};
-  for (const type of PIECE_TYPES) nextTemplates[type] = normalizeModel(raw[type], scale);
+  for (const type of PIECE_TYPES) {
+    // Apply individual height adjustments after deriving the shared scale, so
+    // a taller king does not shrink the queen, pawns, or other pieces.
+    raw[type].scale.y *= nextPieceSet.heightMultipliers?.[type] ?? 1;
+    nextTemplates[type] = normalizeModel(raw[type], scale);
+  }
   if (requestId !== loadPiecesId) throw new Error('piece load superseded');
   for (const type of PIECE_TYPES) templates[type] = nextTemplates[type];
   activePieceSet = nextPieceSet;
@@ -629,10 +605,19 @@ export function createPiece(type, color) {
   // Required before reading any mesh's matrixWorld below.
   obj.updateMatrixWorld(true);
   const rootInverse = new THREE.Matrix4().copy(obj.matrixWorld).invert();
+  const retained = new Set();
   obj.traverse((c) => {
     if (c.isMesh) {
       const localToRoot = new THREE.Matrix4().multiplyMatrices(rootInverse, c.matrixWorld);
-      applyWoodTextureCoordinates(c, localToRoot);
+      // Authored Default meshes already have grain coordinates and smooth normals.
+      // They are immutable and shared between clones; the legacy projection path
+      // owns/disposes its rewritten geometry independently for imported sets.
+      if (!c.userData.authoredWoodUVs) {
+        applyWoodTextureCoordinates(c, localToRoot);
+      } else if (!retained.has(c.geometry)) {
+        c.geometry.userData.pieceReferences = (c.geometry.userData.pieceReferences ?? 0) + 1;
+        retained.add(c.geometry);
+      }
       c.material = MATERIALS[color];
       c.castShadow = true;
       c.receiveShadow = true;

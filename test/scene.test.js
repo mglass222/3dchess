@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { createStudyEnvironment } from '../src/furnishing.js';
 import {
   BOARD_TEXTURES,
   CAMERA_MAX_POLAR_ANGLE,
@@ -46,9 +46,9 @@ describe('scene rendering helpers', () => {
     expect(light).toBeInstanceOf(THREE.MeshPhysicalMaterial);
     expect(dark).toBeInstanceOf(THREE.MeshPhysicalMaterial);
     expect(frame).toBeInstanceOf(THREE.MeshPhysicalMaterial);
-    expect(light.color.getHex()).toBe(0xe8d6ae);
-    expect(dark.color.getHex()).toBe(0x6e5340);
-    expect(frame.color.getHex()).toBe(0x2c2018);
+    expect(light.color.getHex()).toBe(0xe5edff);
+    expect(dark.color.getHex()).toBe(0xf4dfc5);
+    expect(frame.color.getHex()).toBe(0xc9a582);
     expect(light.clearcoat).toBeGreaterThan(0);
     expect(dark.clearcoat).toBeGreaterThan(0);
     expect(light.envMapIntensity).toBeCloseTo(0.28, 5);
@@ -57,9 +57,9 @@ describe('scene rendering helpers', () => {
   });
 
   it('describes grain texture assets for the board woods', () => {
-    expect(BOARD_TEXTURES.light.url).toBe('textures/board/maple-grain.svg');
-    expect(BOARD_TEXTURES.dark.url).toBe('textures/board/walnut-grain.svg');
-    expect(BOARD_TEXTURES.frame.url).toBe('textures/board/walnut-grain.svg');
+    expect(BOARD_TEXTURES.light.url).toBe('textures/board/cherry-color.jpg');
+    expect(BOARD_TEXTURES.dark.url).toBe('textures/board/walnut-color.jpg');
+    expect(BOARD_TEXTURES.frame.url).toBe('textures/board/walnut-color.jpg');
     expect(BOARD_TEXTURES.light.repeat[0]).toBeGreaterThan(0);
     expect(BOARD_TEXTURES.dark.repeat[1]).toBeGreaterThan(0);
     // Light and dark must share a physical grain scale — mismatched repeats
@@ -80,9 +80,15 @@ describe('scene rendering helpers', () => {
     const { light, dark, frame } = createBoardMaterials({ textureLoader: loader, baseUrl: '/game/' });
 
     expect(loadedUrls).toEqual([
-      '/game/textures/board/maple-grain.svg',
-      '/game/textures/board/walnut-grain.svg',
-      '/game/textures/board/walnut-grain.svg',
+      '/game/textures/board/cherry-color.jpg',
+      '/game/textures/board/cherry-normal.jpg',
+      '/game/textures/board/cherry-roughness.jpg',
+      '/game/textures/board/walnut-color.jpg',
+      '/game/textures/board/walnut-normal.jpg',
+      '/game/textures/board/walnut-roughness.jpg',
+      '/game/textures/board/walnut-color.jpg',
+      '/game/textures/board/walnut-normal.jpg',
+      '/game/textures/board/walnut-roughness.jpg',
     ]);
     for (const material of [light, dark, frame]) {
       expect(material.map).toBeInstanceOf(THREE.Texture);
@@ -90,8 +96,14 @@ describe('scene rendering helpers', () => {
       expect(material.map.wrapS).toBe(THREE.RepeatWrapping);
       expect(material.map.wrapT).toBe(THREE.RepeatWrapping);
       expect(material.map.anisotropy).toBeGreaterThan(1);
+      expect(material.metalness).toBe(0);
+      for (const dataMap of [material.normalMap, material.roughnessMap]) {
+        expect(dataMap).toBeInstanceOf(THREE.Texture);
+        expect(dataMap.colorSpace).toBe(THREE.NoColorSpace);
+        expect(dataMap.repeat).toEqual(material.map.repeat);
+      }
     }
-    expect(onErrors).toHaveLength(3);
+    expect(onErrors).toHaveLength(9);
     expect(onErrors.every((onError) => typeof onError === 'function')).toBe(true);
   });
 
@@ -101,7 +113,16 @@ describe('scene rendering helpers', () => {
     const squareMaps = [];
 
     board.traverse((child) => {
-      if (child.isMesh && child.name.startsWith('square-')) squareMaps.push(child.material.map);
+      if (child.isMesh && child.name.startsWith('square-')) {
+        const { map, normalMap, roughnessMap } = child.material;
+        squareMaps.push(map);
+        for (const dataMap of [normalMap, roughnessMap]) {
+          expect(dataMap.offset).toEqual(map.offset);
+          expect(dataMap.repeat).toEqual(map.repeat);
+          expect(dataMap.rotation).toBe(map.rotation);
+          expect(dataMap.colorSpace).toBe(THREE.NoColorSpace);
+        }
+      }
     });
 
     expect(squareMaps.length).toBe(64);
@@ -144,14 +165,13 @@ describe('scene rendering helpers', () => {
 
   it('keeps frame geometry below the playable square surface', () => {
     const board = createChessBoard();
-    const materials = createBoardMaterials();
     const frameMeshes = [];
     const squareMeshes = [];
 
     board.traverse((child) => {
       if (!child.isMesh) return;
-      if (child.material.color.getHex() === materials.frame.color.getHex()) frameMeshes.push(child);
-      else squareMeshes.push(child);
+      if (child.name.startsWith('square-')) squareMeshes.push(child);
+      else frameMeshes.push(child);
     });
 
     expect(squareMeshes.length).toBe(64);
@@ -217,7 +237,7 @@ describe('scene rendering helpers', () => {
     expect(sharedMaterialDisposed).toBe(false);
   });
 
-  it('creates a PMREM environment from a real RoomEnvironment scene', () => {
+  it('creates a PMREM environment from the study window scene', () => {
     let disposedGenerator = false;
     let fromSceneArgs = null;
     let receivedRoom = null;
@@ -234,7 +254,7 @@ describe('scene rendering helpers', () => {
         },
         dispose: () => { disposedGenerator = true; },
       }),
-      roomFactory: () => new RoomEnvironment(),
+      roomFactory: () => createStudyEnvironment(),
     });
 
     expect(texture).toBe(fakeTexture);

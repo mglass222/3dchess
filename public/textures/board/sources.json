@@ -1,0 +1,32 @@
+[
+  {
+    "file": "walnut-color.jpg",
+    "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/european_walnut_veneer_05/european_walnut_veneer_05_diff_1k.jpg",
+    "md5": "4e3684dd122be2618b6d10a1a4002349"
+  },
+  {
+    "file": "walnut-normal.jpg",
+    "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/european_walnut_veneer_05/european_walnut_veneer_05_nor_gl_1k.jpg",
+    "md5": "2f583cefdd6d59c53fef7ad3e4ec02af"
+  },
+  {
+    "file": "walnut-roughness.jpg",
+    "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/european_walnut_veneer_05/european_walnut_veneer_05_rough_1k.jpg",
+    "md5": "9a43bc928c47220a361f49cfcba666f0"
+  },
+  {
+    "file": "cherry-color.jpg",
+    "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/cherry_veneer/cherry_veneer_diff_1k.jpg",
+    "md5": "830831a311de65af31d238be811aa46f"
+  },
+  {
+    "file": "cherry-normal.jpg",
+    "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/cherry_veneer/cherry_veneer_nor_gl_1k.jpg",
+    "md5": "cb9cd94c9c0028ef84a60ac4f1dfcf1d"
+  },
+  {
+    "file": "cherry-roughness.jpg",
+    "source": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/cherry_veneer/cherry_veneer_rough_1k.jpg",
+    "md5": "24e433b708fbafdcaa1b074bb8a2d673"
+  }
+]

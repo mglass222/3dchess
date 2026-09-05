@@ -50,5 +50,6 @@ npm test         # run the unit suite (Vitest)
 
 ## Credits
 
-- 3D chess piece models: ["chess-3d"](https://github.com/ernest-rudnicki/chess-3d) by Ernest Rudnicki, MIT License (see `public/models/LICENSE.txt`).
+- Default pieces: original Staunton bodies and crowns generated with `npm run models:build`.
+- Default knight head and Downloaded set: ["Realistic Chess Set 3D Model"](https://sketchfab.com/3d-models/realistic-chess-set-3d-model-a07b3ac3f57f4fa3822e3f2d6241a7b0) by [noob-3d](https://sketchfab.com/noob-3d), [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The Default knight head is extracted, simplified, sculpted and fitted to a new pedestal; see `public/models/Default/LICENSE.txt`.
 - Chess engine: [Stockfish](https://stockfishchess.org/). Rules: [chess.js](https://github.com/jhlywa/chess.js). Rendering: [three.js](https://threejs.org/).

@@ -1,24 +1,18 @@
-3D chess piece models in this directory are from "chess-3d" by Ernest Rudnicki
-https://github.com/ernest-rudnicki/chess-3d
+Default Staunton set — model credits
 
-MIT License
+The pawn, rook, bishop, queen, king and knight pedestal are original geometry
+created for this project. Rebuild them with: npm run models:build
 
-Copyright (c) 2022 Ernest Rudnicki
+The knight head is adapted from:
+"Realistic Chess Set 3D Model" by noob-3d
+https://sketchfab.com/noob-3d
+https://sketchfab.com/3d-models/realistic-chess-set-3d-model-a07b3ac3f57f4fa3822e3f2d6241a7b0
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Modifications: extracted the horse head from the project's existing Downloaded
+set, removed its original pedestal and textures, reduced its triangle count,
+resized/reoriented it, refined its eye/nostril recesses and smooth normals, and fitted it to a new turned pedestal with new wood UVs.
+The author does not endorse this adaptation. The source attribution is also
+embedded in knight.glb. Retain this credit when sharing the adapted knight.
